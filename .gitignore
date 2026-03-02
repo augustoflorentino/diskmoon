@@ -1,0 +1,6 @@
+build/
+diskmoon
+diskmoon-*.txt
+diskmoon-*.json
+diskmoon-*.csv
+__pycache__/

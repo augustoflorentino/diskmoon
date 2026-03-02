@@ -1,0 +1,217 @@
+#include <getopt.h>
+#include <limits.h>
+#include <malloc.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+#include <unistd.h>
+
+#include "config.h"
+#include "export.h"
+#include "fmt.h"
+#include "report.h"
+#include "scan.h"
+#include "tree.h"
+
+static void usage(FILE *f)
+{
+	fprintf(f,
+		"usage: diskmoon [options] [path]\n"
+		"\n"
+		"Scan a directory tree and show where the space went.\n"
+		"The report goes to stdout, or to a new diskmoon-DATE.txt when stdout is a\n"
+		"terminal. The path defaults to /.\n"
+		"\n"
+		"  -o, --output FILE     write to FILE ('-' for stdout); .json and .csv pick the format\n"
+		"  -F, --format FMT      txt (report), ncdu (ncdu JSON export) or csv\n"
+		"  -d, --depth N         show the tree down to depth N (sizes stay complete)\n"
+		"  -m, --min-size SIZE   fold entries smaller than SIZE (e.g. 10M, 1G)\n"
+		"  -n, --top N           list the N largest files (default %d)\n"
+		"  -j, --jobs N          scanner threads (default: CPUs up to %d, %d on spinning disks)\n"
+		"  -x, --one-file-system stay on the filesystem of the starting path\n"
+		"  -a, --apparent-size   count file length instead of allocated blocks\n"
+		"      --all-fs          also enter tmpfs, proc, fuse and other non-disk mounts\n"
+		"      --dirs-only       hide files in the tree (they still count in totals)\n"
+		"      --ascii           draw the tree with ASCII characters\n"
+		"  -q, --quiet           no progress on stderr\n"
+		"  -h, --help            show this help\n"
+		"  -V, --version         show the version\n",
+		DEFAULT_TOP_FILES, MAX_AUTO_JOBS, ROTATIONAL_JOBS);
+}
+
+static int fail(const char *what, const char *value)
+{
+	fprintf(stderr, "diskmoon: invalid %s: %s\n", what, value);
+	return -1;
+}
+
+static int parse_int(const char *s, int *out)
+{
+	char *end;
+	long v = strtol(s, &end, 10);
+	if (end == s || *end || v < 0 || v > INT_MAX)
+		return -1;
+	*out = (int)v;
+	return 0;
+}
+
+enum { OPT_ALL_FS = 256, OPT_DIRS_ONLY, OPT_ASCII };
+
+static const struct option long_options[] = {
+	{ "output", required_argument, NULL, 'o' },
+	{ "format", required_argument, NULL, 'F' },
+	{ "depth", required_argument, NULL, 'd' },
+	{ "min-size", required_argument, NULL, 'm' },
+	{ "top", required_argument, NULL, 'n' },
+	{ "jobs", required_argument, NULL, 'j' },
+	{ "one-file-system", no_argument, NULL, 'x' },
+	{ "apparent-size", no_argument, NULL, 'a' },
+	{ "all-fs", no_argument, NULL, OPT_ALL_FS },
+	{ "dirs-only", no_argument, NULL, OPT_DIRS_ONLY },
+	{ "ascii", no_argument, NULL, OPT_ASCII },
+	{ "quiet", no_argument, NULL, 'q' },
+	{ "help", no_argument, NULL, 'h' },
+	{ "version", no_argument, NULL, 'V' },
+	{ 0 },
+};
+
+static int parse_format(const char *s, enum format *out)
+{
+	static const char *const names[] = { [FORMAT_TXT] = "txt", [FORMAT_NCDU] = "ncdu", [FORMAT_CSV] = "csv" };
+	for (int i = FORMAT_TXT; i <= FORMAT_CSV; i++)
+		if (!strcmp(s, names[i])) {
+			*out = (enum format)i;
+			return 0;
+		}
+	if (strcmp(s, "json"))
+		return -1;
+	*out = FORMAT_NCDU;
+	return 0;
+}
+
+static enum format format_from_name(const char *name)
+{
+	const char *dot = name ? strrchr(name, '.') : NULL;
+	if (dot && !strcmp(dot, ".json"))
+		return FORMAT_NCDU;
+	return dot && !strcmp(dot, ".csv") ? FORMAT_CSV : FORMAT_TXT;
+}
+
+static int apply_option(struct options *o, int opt)
+{
+	switch (opt) {
+	case 'o': o->output = optarg; return 0;
+	case 'F': return parse_format(optarg, &o->format) ? fail("format", optarg) : 0;
+	case 'd': return parse_int(optarg, &o->max_depth) ? fail("depth", optarg) : 0;
+	case 'm': return parse_size(optarg, &o->min_size) ? 0 : fail("size", optarg);
+	case 'n': return parse_int(optarg, &o->top) ? fail("count", optarg) : 0;
+	case 'j': return parse_int(optarg, &o->jobs) ? fail("job count", optarg) : 0;
+	case 'x': o->one_fs = true; return 0;
+	case 'a': o->apparent = true; return 0;
+	case 'q': o->quiet = true; return 0;
+	case OPT_ALL_FS: o->all_fs = true; return 0;
+	case OPT_DIRS_ONLY: o->no_files = true; return 0;
+	case OPT_ASCII: o->ascii = true; return 0;
+	case 'h': usage(stdout); exit(0);
+	case 'V': puts("diskmoon " DISKMOON_VERSION); exit(0);
+	default: usage(stderr); return -1;
+	}
+}
+
+static int parse_args(int argc, char **argv, struct options *o)
+{
+	*o = (struct options){ .max_depth = -1, .top = DEFAULT_TOP_FILES };
+	int opt;
+	while ((opt = getopt_long(argc, argv, "o:F:d:m:n:j:xaqhV", long_options, NULL)) != -1)
+		if (apply_option(o, opt))
+			return -1;
+	if (argc - optind > 1)
+		return fail("arguments", "only one path is accepted");
+	if (o->format == FORMAT_AUTO)
+		o->format = format_from_name(o->output);
+	const char *path = optind < argc ? argv[optind] : "/";
+	o->root = realpath(path, NULL);
+	if (!o->root) {
+		perror(path);
+		return -1;
+	}
+	return 0;
+}
+
+static FILE *open_output(const struct options *o, char *name, size_t cap)
+{
+	if (o->output && strcmp(o->output, "-"))
+		snprintf(name, cap, "%s", o->output);
+	else if (!o->output && isatty(STDOUT_FILENO)) {
+		time_t now = time(NULL);
+		struct tm tm;
+		localtime_r(&now, &tm);
+		static const char *const ext[] = { [FORMAT_TXT] = "txt", [FORMAT_NCDU] = "json", [FORMAT_CSV] = "csv" };
+		char stamp[64];
+		strftime(stamp, sizeof stamp, "%Y%m%d-%H%M%S", &tm);
+		snprintf(name, cap, DEFAULT_REPORT_PREFIX "-%s.%s", stamp, ext[o->format]);
+	} else {
+		name[0] = '\0';
+		return stdout;
+	}
+	FILE *f = fopen(name, "w");
+	if (!f)
+		perror(name);
+	return f;
+}
+
+static int load_tree(const struct options *o, struct scan_result *r, struct tree_stats *s)
+{
+	if (scan_run(o, r))
+		return -1;
+	tree_finalize(r->root, (size_t)o->top, s);
+	return 0;
+}
+
+static void write_output(FILE *f, const struct options *o, const struct scan_result *r, const struct tree_stats *s)
+{
+	if (o->format == FORMAT_NCDU)
+		export_ncdu(f, o, r);
+	else if (o->format == FORMAT_CSV)
+		export_csv(f, o, r);
+	else
+		report_write(f, o, r, s);
+}
+
+static int deliver(const struct options *o, struct scan_result *r, struct tree_stats *s)
+{
+	char name[PATH_MAX];
+	FILE *f = open_output(o, name, sizeof name);
+	if (!f)
+		return 1;
+	setvbuf(f, NULL, _IOFBF, OUTPUT_BUFFER);
+	write_output(f, o, r, s);
+	if (fclose(f)) {
+		perror(name[0] ? name : "stdout");
+		return 1;
+	}
+	if (name[0] && !o->quiet)
+		fprintf(stderr, "written to %s\n", name);
+	return 0;
+}
+
+static int run(struct options *o, struct scan_result *r, struct tree_stats *s)
+{
+	return deliver(o, r, s);
+}
+
+int main(int argc, char **argv)
+{
+	struct options o;
+	mallopt(M_MMAP_THRESHOLD, MMAP_THRESHOLD);
+	if (parse_args(argc, argv, &o))
+		return 1;
+	struct scan_result r = { 0 };
+	struct tree_stats s = { 0 };
+	int status = load_tree(&o, &r, &s) ? 1 : run(&o, &r, &s);
+	tree_stats_free(&s);
+	scan_result_free(&r);
+	free(o.root);
+	return status;
+}
