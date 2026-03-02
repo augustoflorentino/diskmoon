@@ -133,11 +133,28 @@ bool parse_size(const char *s, uint64_t *out)
 	return true;
 }
 
+static int utf8_length(const unsigned char *c)
+{
+	int n = *c >= 0xf0 && *c <= 0xf4 ? 4 : *c >= 0xe0 ? 3 : *c >= 0xc2 ? 2 : 0;
+	for (int i = 1; i < n; i++)
+		if ((c[i] & 0xc0) != 0x80)
+			return 0;
+	return n;
+}
+
 char *fmt_escaped(char *out, const char *s)
 {
 	static const char hex[] = "0123456789abcdef";
 	for (const unsigned char *c = (const unsigned char *)s; *c; c++) {
-		if (*c >= 0x20 && *c != 0x7f && *c != '\\') {
+		if (*c >= 0x80) {
+			int n = utf8_length(c);
+			if (n) {
+				memcpy(out, c, (size_t)n);
+				out += n;
+				c += n - 1;
+				continue;
+			}
+		} else if (*c >= 0x20 && *c != 0x7f && *c != '\\') {
 			*out++ = (char)*c;
 			continue;
 		}

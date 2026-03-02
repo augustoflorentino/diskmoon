@@ -27,6 +27,18 @@ def du(path):
     return int(subprocess.run(["du", "-sxB1", path], capture_output=True, text=True).stdout.split()[0])
 
 
+def walk_total(path):
+    st = os.lstat(path)
+    seen, size = {(st.st_dev, st.st_ino)}, st.st_blocks * 512
+    for _, dirs, files, fd in os.fwalk(path):
+        for name in dirs + files:
+            s = os.lstat(name, dir_fd=fd)
+            if (s.st_dev, s.st_ino) not in seen:
+                seen.add((s.st_dev, s.st_ino))
+                size += s.st_blocks * 512
+    return size
+
+
 def without_timestamp(path):
     return re.sub(rb'"timestamp":\d+', b"", open(path, "rb").read())
 
@@ -46,6 +58,23 @@ def make_links(base):
         for k in range(i % 4):
             os.makedirs(os.path.join(base, f"d{(i + k + 1) % 7}"), exist_ok=True)
             os.link(first, os.path.join(base, f"d{(i + k + 1) % 7}", f"l{i}_{k}"))
+
+
+def make_odd(base):
+    os.makedirs(base)
+    fd = os.open(base, os.O_RDONLY)
+    for i in range(25):
+        name = f"n{i:02d}" + "x" * 200
+        os.mkdir(name, dir_fd=fd)
+        child = os.open(name, os.O_RDONLY, dir_fd=fd)
+        os.close(fd)
+        fd = child
+    deep = os.open("deep.bin", os.O_WRONLY | os.O_CREAT, dir_fd=fd)
+    os.write(deep, os.urandom(50000))
+    os.close(deep)
+    os.close(fd)
+    for name in [b"new\nline", b"tab\there", b"ctl\x01\x7f", b"bad\xff\xfeutf", b'quote"and\\slash', "acentuação".encode()]:
+        open(os.path.join(os.fsencode(base), name), "wb").write(os.urandom(9000))
 
 
 def test_total_matches_du(t):
@@ -80,6 +109,18 @@ def test_import_matches_scan(t):
     assert scanned == imported
 
 
+def test_long_paths_and_odd_names(t):
+    odd = t["odd"]
+    assert total(odd) == walk_total(odd)
+    csv = run("-F", "csv", "-o", "-", odd).stdout
+    assert b"deep.bin" in csv and b"new\\nline" in csv and b"bad\\xff\\xfeutf" in csv
+    assert max(len(line) for line in csv.splitlines()) > 5000
+    a, b = os.path.join(t["tmp"], "odd.json"), os.path.join(t["tmp"], "odd2.json")
+    run("-o", a, odd)
+    run("-f", a, "-o", b)
+    assert open(a, "rb").read() == open(b, "rb").read()
+
+
 def test_bad_arguments(t):
     assert run("--no-such-option", check=False).returncode == 1
     assert run("-f", os.path.join(t["tmp"], "missing.json"), check=False).returncode == 1
@@ -103,9 +144,10 @@ def run_all(t):
 
 def main():
     with tempfile.TemporaryDirectory(prefix="diskmoon-test-") as tmp:
-        t = {"tmp": tmp, "tree": os.path.join(tmp, "tree"), "links": os.path.join(tmp, "links")}
+        t = {"tmp": tmp, "tree": os.path.join(tmp, "tree"), "links": os.path.join(tmp, "links"), "odd": os.path.join(tmp, "odd")}
         make_tree(t["tree"])
         make_links(t["links"])
+        make_odd(t["odd"])
         return run_all(t)
 
 
