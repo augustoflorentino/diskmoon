@@ -9,6 +9,7 @@
 
 #include "config.h"
 #include "export.h"
+#include "import.h"
 #include "fmt.h"
 #include "report.h"
 #include "scan.h"
@@ -18,6 +19,7 @@ static void usage(FILE *f)
 {
 	fprintf(f,
 		"usage: diskmoon [options] [path]\n"
+		"       diskmoon [options] -f FILE\n"
 		"\n"
 		"Scan a directory tree and show where the space went.\n"
 		"The report goes to stdout, or to a new diskmoon-DATE.txt when stdout is a\n"
@@ -25,6 +27,7 @@ static void usage(FILE *f)
 		"\n"
 		"  -o, --output FILE     write to FILE ('-' for stdout); .json and .csv pick the format\n"
 		"  -F, --format FMT      txt (report), ncdu (ncdu JSON export) or csv\n"
+		"  -f, --from FILE       read an ncdu JSON export instead of scanning ('-' for stdin)\n"
 		"  -d, --depth N         show the tree down to depth N (sizes stay complete)\n"
 		"  -m, --min-size SIZE   fold entries smaller than SIZE (e.g. 10M, 1G)\n"
 		"  -n, --top N           list the N largest files (default %d)\n"
@@ -61,6 +64,7 @@ enum { OPT_ALL_FS = 256, OPT_DIRS_ONLY, OPT_ASCII };
 static const struct option long_options[] = {
 	{ "output", required_argument, NULL, 'o' },
 	{ "format", required_argument, NULL, 'F' },
+	{ "from", required_argument, NULL, 'f' },
 	{ "depth", required_argument, NULL, 'd' },
 	{ "min-size", required_argument, NULL, 'm' },
 	{ "top", required_argument, NULL, 'n' },
@@ -103,6 +107,7 @@ static int apply_option(struct options *o, int opt)
 	switch (opt) {
 	case 'o': o->output = optarg; return 0;
 	case 'F': return parse_format(optarg, &o->format) ? fail("format", optarg) : 0;
+	case 'f': o->from = optarg; return 0;
 	case 'd': return parse_int(optarg, &o->max_depth) ? fail("depth", optarg) : 0;
 	case 'm': return parse_size(optarg, &o->min_size) ? 0 : fail("size", optarg);
 	case 'n': return parse_int(optarg, &o->top) ? fail("count", optarg) : 0;
@@ -123,13 +128,15 @@ static int parse_args(int argc, char **argv, struct options *o)
 {
 	*o = (struct options){ .max_depth = -1, .top = DEFAULT_TOP_FILES };
 	int opt;
-	while ((opt = getopt_long(argc, argv, "o:F:d:m:n:j:xaqhV", long_options, NULL)) != -1)
+	while ((opt = getopt_long(argc, argv, "o:F:f:d:m:n:j:xaqhV", long_options, NULL)) != -1)
 		if (apply_option(o, opt))
 			return -1;
 	if (argc - optind > 1)
 		return fail("arguments", "only one path is accepted");
 	if (o->format == FORMAT_AUTO)
 		o->format = format_from_name(o->output);
+	if (o->from)
+		return optind < argc ? fail("arguments", "a path cannot be combined with --from") : 0;
 	const char *path = optind < argc ? argv[optind] : "/";
 	o->root = realpath(path, NULL);
 	if (!o->root) {
@@ -161,9 +168,9 @@ static FILE *open_output(const struct options *o, char *name, size_t cap)
 	return f;
 }
 
-static int load_tree(const struct options *o, struct scan_result *r, struct tree_stats *s)
+static int load_tree(const struct options *o, const char *file, struct scan_result *r, struct tree_stats *s)
 {
-	if (scan_run(o, r))
+	if (file ? import_ncdu(o, file, r) : scan_run(o, r))
 		return -1;
 	tree_finalize(r->root, (size_t)o->top, s);
 	return 0;
@@ -209,7 +216,7 @@ int main(int argc, char **argv)
 		return 1;
 	struct scan_result r = { 0 };
 	struct tree_stats s = { 0 };
-	int status = load_tree(&o, &r, &s) ? 1 : run(&o, &r, &s);
+	int status = load_tree(&o, o.from, &r, &s) ? 1 : run(&o, &r, &s);
 	tree_stats_free(&s);
 	scan_result_free(&r);
 	free(o.root);

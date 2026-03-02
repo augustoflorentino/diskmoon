@@ -8,6 +8,7 @@ enum format { FORMAT_AUTO, FORMAT_TXT, FORMAT_NCDU, FORMAT_CSV };
 
 struct options {
 	char *root;
+	const char *from;
 	const char *output;
 	enum format format;
 	int max_depth;

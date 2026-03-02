@@ -64,8 +64,25 @@ def test_same_output_with_one_or_many_threads(t):
         assert without_timestamp(a) == without_timestamp(b), tree
 
 
+def test_json_round_trip(t):
+    a, b = os.path.join(t["tmp"], "a.json"), os.path.join(t["tmp"], "b.json")
+    run("-o", a, t["links"])
+    json.load(open(a))
+    run("-f", a, "-o", b)
+    assert open(a, "rb").read() == open(b, "rb").read()
+
+
+def test_import_matches_scan(t):
+    a = os.path.join(t["tmp"], "scan.json")
+    run("-o", a, t["tree"])
+    scanned = run("-F", "csv", "-o", "-", t["tree"]).stdout
+    imported = run("-f", a, "-F", "csv", "-o", "-").stdout
+    assert scanned == imported
+
+
 def test_bad_arguments(t):
     assert run("--no-such-option", check=False).returncode == 1
+    assert run("-f", os.path.join(t["tmp"], "missing.json"), check=False).returncode == 1
     assert run("-o", "/dev/null", os.path.join(t["tmp"], "missing"), check=False).returncode == 1
     assert run("--version").returncode == 0
 
