@@ -16,7 +16,10 @@ build/%.o: src/%.c $(wildcard src/*.h) | build
 build:
 	mkdir -p build
 
+check: diskmoon
+	python3 tests/run.py
+
 clean:
 	rm -rf build diskmoon
 
-.PHONY: clean
+.PHONY: check clean
