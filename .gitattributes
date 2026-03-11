@@ -1,0 +1,5 @@
+* text=auto eol=lf
+*.png binary
+*.gif binary
+third_party/** linguist-vendored
+man/*.1 linguist-documentation
