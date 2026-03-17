@@ -1,6 +1,7 @@
 #include <limits.h>
 #include <stdbool.h>
 #include <string.h>
+#include <sys/statvfs.h>
 #include <unistd.h>
 
 #include "config.h"
@@ -59,6 +60,104 @@ static void write_header(FILE *f, const struct options *o, const struct scan_res
 	fprintf(f, "entries    %s files, %s directories, %s unreadable\n", files, dirs, errors);
 	if (r->nerrors && geteuid() && !r->source)
 		fprintf(f, "\nnote       some paths could not be read; run as root for a complete picture\n");
+}
+
+static const struct node *nearest_mount(const struct node *n)
+{
+	const struct node *p = node_parent(n);
+	while (node_parent(p) && !(p->flags & NODE_MOUNT))
+		p = node_parent(p);
+	return p;
+}
+
+static uint64_t own_filesystem_size(const struct node *m, const struct tree_stats *s)
+{
+	uint64_t size = node_size(m);
+	for (size_t i = 0; i < s->mounts.len; i++)
+		if (nearest_mount(s->mounts.items[i]) == m)
+			size -= node_size(s->mounts.items[i]);
+	return size;
+}
+
+struct fs_usage {
+	const struct mount *mount;
+	char path[LONG_PATH];
+	uint64_t total;
+	uint64_t used;
+	uint64_t avail;
+	uint64_t reserved;
+	uint64_t scanned;
+	bool known;
+	bool whole;
+};
+
+static void fs_usage_of(const struct node *n, const struct tree_stats *s, struct fs_usage *u)
+{
+	struct statvfs v;
+	memset(u, 0, sizeof *u);
+	u->mount = mounts_get(node_mount(n));
+	u->scanned = own_filesystem_size(n, s);
+	node_path(n, u->path, sizeof u->path);
+	u->whole = u->mount && !strcmp(u->mount->point, u->path);
+	if (statvfs(u->path, &v))
+		return;
+	u->known = true;
+	u->total = (uint64_t)v.f_blocks * v.f_frsize;
+	u->used = u->total - (uint64_t)v.f_bfree * v.f_frsize;
+	u->avail = (uint64_t)v.f_bavail * v.f_frsize;
+	u->reserved = (uint64_t)(v.f_bfree - v.f_bavail) * v.f_frsize;
+}
+
+static uint64_t not_seen(const struct fs_usage *u)
+{
+	return u->known && u->whole && u->used > u->scanned ? u->used - u->scanned : 0;
+}
+
+static void write_fs_row(FILE *f, const struct node *n, const struct tree_stats *s)
+{
+	char shown[LONG_PATH * 4 + 1], total[FMT_LEN] = "-", used[FMT_LEN] = "-", avail[FMT_LEN] = "-";
+	char pct[FMT_LEN] = "-", scanned[FMT_LEN], unseen[FMT_LEN] = "-";
+	struct fs_usage u;
+	fs_usage_of(n, s, &u);
+	fmt_size(u.scanned, scanned);
+	if (u.known) {
+		fmt_size(u.total, total);
+		fmt_size(u.used, used);
+		fmt_size(u.avail, avail);
+		fmt_percent(u.used, u.used + u.avail, pct);
+	}
+	if (not_seen(&u))
+		fmt_size(not_seen(&u), unseen);
+	*fmt_escaped(shown, u.path) = '\0';
+	fprintf(f, "%-24s %-22s %-8s %9s %9s %9s %7s %9s %9s\n", shown, u.mount ? u.mount->source : "?",
+		u.mount ? u.mount->type : "?", total, used, avail, pct, scanned, unseen);
+}
+
+static void write_overlap_note(FILE *f, const struct node *n, const struct tree_stats *s)
+{
+	struct fs_usage u;
+	fs_usage_of(n, s, &u);
+	if (!u.known || !u.whole || u.scanned <= u.used)
+		return;
+	char extra[FMT_LEN], shown[LONG_PATH * 4 + 1];
+	fmt_size(u.scanned - u.used, extra);
+	*fmt_escaped(shown, u.path) = '\0';
+	fprintf(f, "\nnote       %s: files add up to %s more than the disk uses; they share data\n"
+		   "           (snapshots, reflinked copies or compression), so deleting one copy frees less\n",
+		shown, extra);
+}
+
+static void write_filesystems(FILE *f, const struct scan_result *r, const struct tree_stats *s)
+{
+	fmt_write_section(f, "FILESYSTEMS  (scanned = found by this scan, not seen = used minus scanned)");
+	fprintf(f, "%-24s %-22s %-8s %9s %9s %9s %7s %9s %9s\n", "MOUNT", "DEVICE", "TYPE", "SIZE",
+		"USED", "FREE", "USE", "SCANNED", "NOT SEEN");
+	write_fs_row(f, r->root, s);
+	for (size_t i = 0; i < s->mounts.len; i++)
+		write_fs_row(f, s->mounts.items[i], s);
+	write_overlap_note(f, r->root, s);
+	for (size_t i = 0; i < s->mounts.len; i++)
+		write_overlap_note(f, s->mounts.items[i], s);
 }
 
 static void write_top_files(FILE *f, const struct tree_stats *s)
@@ -220,6 +319,8 @@ static void write_errors(FILE *f, const struct scan_result *r)
 void report_write(FILE *f, const struct options *o, const struct scan_result *r, const struct tree_stats *s)
 {
 	write_header(f, o, r);
+	if (!r->source)
+		write_filesystems(f, r, s);
 	write_top_files(f, s);
 	write_tree(f, o, r->root);
 	write_errors(f, r);
