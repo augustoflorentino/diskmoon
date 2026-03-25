@@ -5,6 +5,7 @@
 #include <unistd.h>
 
 #include "config.h"
+#include "device.h"
 #include "fmt.h"
 #include "mounts.h"
 #include "report.h"
@@ -158,6 +159,36 @@ static void write_filesystems(FILE *f, const struct scan_result *r, const struct
 	write_overlap_note(f, r->root, s);
 	for (size_t i = 0; i < s->mounts.len; i++)
 		write_overlap_note(f, s->mounts.items[i], s);
+}
+
+static void write_capacity_row(FILE *f, const struct node *n, const struct tree_stats *s)
+{
+	struct fs_usage u;
+	fs_usage_of(n, s, &u);
+	if (!u.known || !u.whole)
+		return;
+	uint64_t device = device_size(u.mount->block);
+	char dev[FMT_LEN] = "-", overhead[FMT_LEN] = "-", size[FMT_LEN], reserved[FMT_LEN], usable[FMT_LEN];
+	if (device) {
+		fmt_size(device, dev);
+		fmt_size(device > u.total ? device - u.total : 0, overhead);
+	}
+	fmt_size(u.total, size);
+	fmt_size(u.reserved, reserved);
+	fmt_size(u.total - u.reserved, usable);
+	char shown[LONG_PATH * 4 + 1];
+	*fmt_escaped(shown, u.path) = '\0';
+	fprintf(f, "%-24s %11s %11s %11s %11s %11s\n", shown, dev, overhead, size, reserved, usable);
+}
+
+static void write_capacity(FILE *f, const struct scan_result *r, const struct tree_stats *s)
+{
+	fmt_write_section(f, "CAPACITY  (device size versus space the filesystem offers)");
+	fprintf(f, "%-24s %11s %11s %11s %11s %11s\n", "MOUNT", "DEVICE", "FS OVERHEAD", "FS SIZE", "ROOT ONLY",
+		"FOR USERS");
+	write_capacity_row(f, r->root, s);
+	for (size_t i = 0; i < s->mounts.len; i++)
+		write_capacity_row(f, s->mounts.items[i], s);
 }
 
 static void write_top_files(FILE *f, const struct tree_stats *s)
@@ -319,8 +350,10 @@ static void write_errors(FILE *f, const struct scan_result *r)
 void report_write(FILE *f, const struct options *o, const struct scan_result *r, const struct tree_stats *s)
 {
 	write_header(f, o, r);
-	if (!r->source)
+	if (!r->source) {
 		write_filesystems(f, r, s);
+		write_capacity(f, r, s);
+	}
 	write_top_files(f, s);
 	write_tree(f, o, r->root);
 	write_errors(f, r);
