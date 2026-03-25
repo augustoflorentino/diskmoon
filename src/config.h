@@ -5,6 +5,7 @@
 #define REPORT_FORMAT 1
 
 #define DEFAULT_TOP_FILES 50
+#define EXPLAIN_LIST 10
 #define DEFAULT_REPORT_PREFIX "diskmoon"
 
 #define ARENA_CHUNK (1u << 20)

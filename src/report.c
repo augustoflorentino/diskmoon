@@ -1,3 +1,4 @@
+#include <errno.h>
 #include <limits.h>
 #include <stdbool.h>
 #include <string.h>
@@ -191,6 +192,154 @@ static void write_capacity(FILE *f, const struct scan_result *r, const struct tr
 		write_capacity_row(f, s->mounts.items[i], s);
 }
 
+static void write_amount(FILE *f, uint64_t size, const char *what)
+{
+	char sz[FMT_LEN];
+	fmt_size(size, sz);
+	fprintf(f, "  %9s  %s\n", sz, what);
+}
+
+static uint64_t write_held(FILE *f, const struct explain *e, uint64_t dev)
+{
+	size_t count, shown = 0;
+	uint64_t total = explain_held(e, dev, &count);
+	if (!count)
+		return 0;
+	char what[128], cnt[FMT_LEN];
+	fmt_count(count, cnt);
+	snprintf(what, sizeof what, "deleted but still open (%s file%s, freed when the programs close them)", cnt,
+		 count == 1 ? "" : "s");
+	write_amount(f, total, what);
+	for (size_t i = 0; i < e->nheld && shown < EXPLAIN_LIST; i++) {
+		const struct held_file *h = &e->held[i];
+		if (h->dev != dev || !h->size)
+			continue;
+		char sz[FMT_LEN];
+		fmt_size(h->size, sz);
+		fprintf(f, "             %9s  %s (pid %d)  ", sz, h->comm, h->pid);
+		fmt_write_path(f, h->path);
+		fputc('\n', f);
+		shown++;
+	}
+	return total;
+}
+
+static uint64_t write_hidden(FILE *f, const struct explain *e, int mount)
+{
+	uint64_t total = 0;
+	for (size_t i = 0; i < e->nhidden; i++)
+		if (e->hidden[i].mount == mount && !e->hidden[i].err)
+			total += e->hidden[i].size;
+	for (size_t i = 0; i < e->nhidden; i++)
+		if (e->hidden[i].mount == mount && e->hidden[i].covered_by < 0)
+			fprintf(f, "  %9s  under mount points: not checked (%s)\n", "?",
+				e->hidden[i].err == EPERM ? "run as root" : strerror(e->hidden[i].err));
+	if (!total)
+		return 0;
+	write_amount(f, total, "hidden under mount points (written before something was mounted on top)");
+	for (size_t i = 0; i < e->nhidden; i++) {
+		const struct hidden_dir *h = &e->hidden[i];
+		if (h->mount != mount || h->err || !h->size)
+			continue;
+		char sz[FMT_LEN], cnt[FMT_LEN];
+		fmt_size(h->size, sz);
+		fmt_count(h->files, cnt);
+		fprintf(f, "             %9s  under ", sz);
+		fmt_write_path(f, mounts_get(h->covered_by)->point);
+		fprintf(f, "  (%s entr%s", cnt, h->files == 1 ? "y" : "ies");
+		if (h->largest) {
+			char big[FMT_LEN];
+			fmt_size(h->largest_size, big);
+			fprintf(f, ", largest %s ", big);
+			fmt_write_path(f, h->largest);
+		}
+		fputs(")\n", f);
+	}
+	return total;
+}
+
+static bool under(const char *path, const char *base)
+{
+	size_t len = strlen(base);
+	return !strncmp(path, base, len) && (path[len] == '/' || !path[len] || !strcmp(base, "/"));
+}
+
+static const struct node *owner_of(const char *path, const struct scan_result *r, const struct tree_stats *s)
+{
+	const struct node *best = r->root;
+	size_t best_len = 0;
+	for (size_t i = 0; i < s->mounts.len; i++) {
+		char mp[LONG_PATH];
+		size_t len = node_path(s->mounts.items[i], mp, sizeof mp);
+		if (len > best_len && under(path, mp)) {
+			best = s->mounts.items[i];
+			best_len = len;
+		}
+	}
+	return best;
+}
+
+static size_t errors_in(const struct node *n, const struct scan_result *r, const struct tree_stats *s)
+{
+	size_t count = 0;
+	for (size_t i = 0; i < r->nerrors; i++)
+		count += owner_of(r->errors[i].path, r, s) == n;
+	return count;
+}
+
+static void write_fs_explain(FILE *f, const struct node *n, const struct scan_result *r, const struct tree_stats *s,
+			     const struct explain *e)
+{
+	struct fs_usage u;
+	fs_usage_of(n, s, &u);
+	uint64_t gap = not_seen(&u);
+	if (!u.mount || !u.whole || !gap)
+		return;
+	char sz[FMT_LEN];
+	fmt_size(gap, sz);
+	fputc('\n', f);
+	fmt_write_path(f, u.path);
+	fprintf(f, "  (%s)  not seen %s\n", u.mount->source, sz);
+	uint64_t found = write_held(f, e, u.mount->dev) + write_hidden(f, e, node_mount(n));
+	size_t unreadable = errors_in(n, r, s);
+	char cnt[FMT_LEN];
+	fmt_count(unreadable, cnt);
+	if (unreadable)
+		fprintf(f, "  %9s  inside %s unreadable paths (size unknown, see UNREADABLE PATHS)\n", "?", cnt);
+	if (found < gap)
+		write_amount(f, gap - found, unreadable ? "rest: unreadable paths, filesystem internals or changes during the scan"
+						    : "unexplained: filesystem internals or files that changed during the scan");
+}
+
+static bool has_gap(const struct node *n, const struct tree_stats *s)
+{
+	struct fs_usage u;
+	fs_usage_of(n, s, &u);
+	return not_seen(&u) > 0;
+}
+
+static bool anything_to_explain(const struct scan_result *r, const struct tree_stats *s)
+{
+	if (has_gap(r->root, s))
+		return true;
+	for (size_t i = 0; i < s->mounts.len; i++)
+		if (has_gap(s->mounts.items[i], s))
+			return true;
+	return false;
+}
+
+static void write_explain(FILE *f, const struct scan_result *r, const struct tree_stats *s, const struct explain *e)
+{
+	if (!anything_to_explain(r, s))
+		return;
+	fmt_write_section(f, "NOT SEEN  (space counted as used that no visible path holds)");
+	if (geteuid())
+		fprintf(f, "note: only your own processes were checked; run as root for the full picture\n");
+	write_fs_explain(f, r->root, r, s, e);
+	for (size_t i = 0; i < s->mounts.len; i++)
+		write_fs_explain(f, s->mounts.items[i], r, s, e);
+}
+
 static void write_top_files(FILE *f, const struct tree_stats *s)
 {
 	char title[64];
@@ -347,12 +496,14 @@ static void write_errors(FILE *f, const struct scan_result *r)
 	}
 }
 
-void report_write(FILE *f, const struct options *o, const struct scan_result *r, const struct tree_stats *s)
+void report_write(FILE *f, const struct options *o, const struct scan_result *r, const struct tree_stats *s,
+		  const struct explain *e)
 {
 	write_header(f, o, r);
 	if (!r->source) {
 		write_filesystems(f, r, s);
 		write_capacity(f, r, s);
+		write_explain(f, r, s, e);
 	}
 	write_top_files(f, s);
 	write_tree(f, o, r->root);

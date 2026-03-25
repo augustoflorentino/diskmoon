@@ -8,6 +8,7 @@
 #include <unistd.h>
 
 #include "config.h"
+#include "explain.h"
 #include "export.h"
 #include "import.h"
 #include "fmt.h"
@@ -146,6 +147,19 @@ static int parse_args(int argc, char **argv, struct options *o)
 	return 0;
 }
 
+static void collect_explain(const struct scan_result *r, const struct tree_stats *s, struct explain *e)
+{
+	int *mounts = malloc((s->mounts.len + 1) * sizeof *mounts);
+	if (!mounts)
+		return;
+	size_t n = 0;
+	mounts[n++] = node_mount(r->root);
+	for (size_t i = 0; i < s->mounts.len; i++)
+		mounts[n++] = node_mount(s->mounts.items[i]);
+	explain_collect(e, mounts, n);
+	free(mounts);
+}
+
 static FILE *open_output(const struct options *o, char *name, size_t cap)
 {
 	if (o->output && strcmp(o->output, "-"))
@@ -176,24 +190,25 @@ static int load_tree(const struct options *o, const char *file, struct scan_resu
 	return 0;
 }
 
-static void write_output(FILE *f, const struct options *o, const struct scan_result *r, const struct tree_stats *s)
+static void write_output(FILE *f, const struct options *o, const struct scan_result *r, const struct tree_stats *s,
+			 const struct explain *e)
 {
 	if (o->format == FORMAT_NCDU)
 		export_ncdu(f, o, r);
 	else if (o->format == FORMAT_CSV)
 		export_csv(f, o, r);
 	else
-		report_write(f, o, r, s);
+		report_write(f, o, r, s, e);
 }
 
-static int deliver(const struct options *o, struct scan_result *r, struct tree_stats *s)
+static int deliver(const struct options *o, struct scan_result *r, struct tree_stats *s, struct explain *e)
 {
 	char name[PATH_MAX];
 	FILE *f = open_output(o, name, sizeof name);
 	if (!f)
 		return 1;
 	setvbuf(f, NULL, _IOFBF, OUTPUT_BUFFER);
-	write_output(f, o, r, s);
+	write_output(f, o, r, s, e);
 	if (fclose(f)) {
 		perror(name[0] ? name : "stdout");
 		return 1;
@@ -205,7 +220,12 @@ static int deliver(const struct options *o, struct scan_result *r, struct tree_s
 
 static int run(struct options *o, struct scan_result *r, struct tree_stats *s)
 {
-	return deliver(o, r, s);
+	struct explain e = { 0 };
+	if (!o->from && o->format == FORMAT_TXT)
+		collect_explain(r, s, &e);
+	int status = deliver(o, r, s, &e);
+	explain_free(&e);
+	return status;
 }
 
 int main(int argc, char **argv)
