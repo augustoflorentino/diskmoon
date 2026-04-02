@@ -21,6 +21,7 @@ struct options {
 	bool no_files;
 	bool ascii;
 	bool quiet;
+	bool interactive;
 };
 
 #endif

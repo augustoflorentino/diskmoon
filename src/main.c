@@ -15,6 +15,7 @@
 #include "report.h"
 #include "scan.h"
 #include "tree.h"
+#include "tui.h"
 
 static void usage(FILE *f)
 {
@@ -23,8 +24,8 @@ static void usage(FILE *f)
 		"       diskmoon [options] -f FILE\n"
 		"\n"
 		"Scan a directory tree and show where the space went.\n"
-		"The report goes to stdout, or to a new diskmoon-DATE.txt when stdout is a\n"
-		"terminal. The path defaults to /.\n"
+		"In a terminal it opens an interactive view (press ? there for keys); otherwise,\n"
+		"or with -o or -F, it writes the complete report. The path defaults to /.\n"
 		"\n"
 		"  -o, --output FILE     write to FILE ('-' for stdout); .json and .csv pick the format\n"
 		"  -F, --format FMT      txt (report), ncdu (ncdu JSON export) or csv\n"
@@ -134,6 +135,7 @@ static int parse_args(int argc, char **argv, struct options *o)
 			return -1;
 	if (argc - optind > 1)
 		return fail("arguments", "only one path is accepted");
+	o->interactive = !o->output && o->format == FORMAT_AUTO && isatty(STDIN_FILENO) && isatty(STDOUT_FILENO);
 	if (o->format == FORMAT_AUTO)
 		o->format = format_from_name(o->output);
 	if (o->from)
@@ -203,6 +205,8 @@ static void write_output(FILE *f, const struct options *o, const struct scan_res
 
 static int deliver(const struct options *o, struct scan_result *r, struct tree_stats *s, struct explain *e)
 {
+	if (o->interactive)
+		return tui_run(o, r, s, e);
 	char name[PATH_MAX];
 	FILE *f = open_output(o, name, sizeof name);
 	if (!f)
