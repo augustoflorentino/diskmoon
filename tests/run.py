@@ -121,6 +121,12 @@ def test_long_paths_and_odd_names(t):
     assert open(a, "rb").read() == open(b, "rb").read()
 
 
+def test_report_sections(t):
+    text = run("-o", "-", t["tree"]).stdout.decode(errors="replace")
+    for section in ("FILESYSTEMS", "LARGEST FILES", "TREE"):
+        assert section in text, section
+
+
 def test_bad_arguments(t):
     assert run("--no-such-option", check=False).returncode == 1
     assert run("-f", os.path.join(t["tmp"], "missing.json"), check=False).returncode == 1
