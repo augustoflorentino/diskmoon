@@ -5,6 +5,12 @@ the ncdu JSON it writes.
 
 ## Unreleased
 
+## 0.3.0 - 2026-04-02
+
+### Added
+- Interactive view when stdin and stdout are a terminal: Report and Files tabs, filter, sort,
+  search, and `w` to write the full report.
+
 ## 0.2.0 - 2026-04-01
 
 ### Added
