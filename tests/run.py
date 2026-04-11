@@ -123,7 +123,7 @@ def test_long_paths_and_odd_names(t):
 
 def test_report_sections(t):
     text = run("-o", "-", t["tree"]).stdout.decode(errors="replace")
-    for section in ("FILESYSTEMS", "LARGEST FILES", "TREE"):
+    for section in ("SUMMARY", "FILESYSTEMS", "BY FILE TYPE", "LARGEST FILES", "TREE"):
         assert section in text, section
 
 

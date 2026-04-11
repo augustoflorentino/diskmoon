@@ -35,7 +35,8 @@ static const char help_text[] =
 	"\n"
 	"WHAT THE TABS SHOW\n"
 	"=====\n"
-	"  Report   disks, space nobody can see, biggest files and the top of the tree\n"
+	"  Report   plain-language summary, what can be freed, disks, space nobody can see,\n"
+	"           file types, folders untouched for a year, biggest files\n"
 	"  Files    every folder and file, biggest first, with share of the parent folder\n"
 	"\n"
 	"diskmoon only reads; nothing is deleted from here.\n";
@@ -96,7 +97,7 @@ static void load_report(struct tui *t)
 	render(&f, &data, &size);
 	if (!f)
 		return;
-	report_write(f, &o, t->r, t->s, t->e);
+	report_write(f, &o, t->r, t->s, t->e, t->a);
 	fclose(f);
 	pager_load(&t->report, data, size);
 }
@@ -138,7 +139,7 @@ static void write_report(struct tui *t)
 		return;
 	}
 	setvbuf(f, NULL, _IOFBF, OUTPUT_BUFFER);
-	report_write(f, t->o, t->r, t->s, t->e);
+	report_write(f, t->o, t->r, t->s, t->e, t->a);
 	char *where = realpath(".", NULL);
 	tui_status(t, fclose(f) ? "error while writing %s/%s" : "report written to %s/%s", where ? where : ".", name);
 	free(where);
@@ -310,9 +311,10 @@ static void release(struct tui *t)
 	files_close(t);
 }
 
-int tui_run(const struct options *o, const struct scan_result *r, const struct tree_stats *s, const struct explain *e)
+int tui_run(const struct options *o, const struct scan_result *r, const struct tree_stats *s, const struct explain *e,
+	    const struct analysis *a)
 {
-	struct tui t = { .o = o, .r = r, .s = s, .e = e };
+	struct tui t = { .o = o, .r = r, .s = s, .e = e, .a = a };
 	load_report(&t);
 	load_text(&t.help, "%s", help_text);
 	files_open(&t, r->root, NULL);

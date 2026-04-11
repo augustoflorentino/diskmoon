@@ -5,6 +5,7 @@
 #include <sys/statvfs.h>
 #include <unistd.h>
 
+#include "advice.h"
 #include "config.h"
 #include "device.h"
 #include "fmt.h"
@@ -497,14 +498,18 @@ static void write_errors(FILE *f, const struct scan_result *r)
 }
 
 void report_write(FILE *f, const struct options *o, const struct scan_result *r, const struct tree_stats *s,
-		  const struct explain *e)
+		  const struct explain *e, const struct analysis *a)
 {
 	write_header(f, o, r);
+	advice_summary(f, r, e, a);
+	advice_cleanup(f, a, e);
 	if (!r->source) {
 		write_filesystems(f, r, s);
 		write_capacity(f, r, s);
 		write_explain(f, r, s, e);
 	}
+	advice_types(f, a, node_size(r->root));
+	advice_stale(f, a);
 	write_top_files(f, s);
 	write_tree(f, o, r->root);
 	write_errors(f, r);

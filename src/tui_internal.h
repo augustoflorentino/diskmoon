@@ -48,6 +48,7 @@ struct tui {
 	const struct scan_result *r;
 	const struct tree_stats *s;
 	const struct explain *e;
+	const struct analysis *a;
 	enum tui_view view;
 	enum tui_view before_help;
 	struct files files;

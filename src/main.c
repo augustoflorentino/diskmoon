@@ -8,6 +8,7 @@
 #include <unistd.h>
 
 #include "config.h"
+#include "analyze.h"
 #include "explain.h"
 #include "export.h"
 #include "import.h"
@@ -193,26 +194,27 @@ static int load_tree(const struct options *o, const char *file, struct scan_resu
 }
 
 static void write_output(FILE *f, const struct options *o, const struct scan_result *r, const struct tree_stats *s,
-			 const struct explain *e)
+			 const struct explain *e, const struct analysis *a)
 {
 	if (o->format == FORMAT_NCDU)
 		export_ncdu(f, o, r);
 	else if (o->format == FORMAT_CSV)
 		export_csv(f, o, r);
 	else
-		report_write(f, o, r, s, e);
+		report_write(f, o, r, s, e, a);
 }
 
-static int deliver(const struct options *o, struct scan_result *r, struct tree_stats *s, struct explain *e)
+static int deliver(const struct options *o, struct scan_result *r, struct tree_stats *s, struct explain *e,
+		   struct analysis *a)
 {
 	if (o->interactive)
-		return tui_run(o, r, s, e);
+		return tui_run(o, r, s, e, a);
 	char name[PATH_MAX];
 	FILE *f = open_output(o, name, sizeof name);
 	if (!f)
 		return 1;
 	setvbuf(f, NULL, _IOFBF, OUTPUT_BUFFER);
-	write_output(f, o, r, s, e);
+	write_output(f, o, r, s, e, a);
 	if (fclose(f)) {
 		perror(name[0] ? name : "stdout");
 		return 1;
@@ -225,9 +227,13 @@ static int deliver(const struct options *o, struct scan_result *r, struct tree_s
 static int run(struct options *o, struct scan_result *r, struct tree_stats *s)
 {
 	struct explain e = { 0 };
+	struct analysis a = { 0 };
 	if (!o->from && o->format == FORMAT_TXT)
 		collect_explain(r, s, &e);
-	int status = deliver(o, r, s, &e);
+	if (o->format == FORMAT_TXT)
+		analyze_run(r, &a);
+	int status = deliver(o, r, s, &e, &a);
+	analyze_free(&a);
 	explain_free(&e);
 	return status;
 }
