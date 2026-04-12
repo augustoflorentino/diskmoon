@@ -17,15 +17,18 @@ const struct term_style tui_dim = { TERM_DIM, 0, 0 };
 const struct term_style tui_bold = { TERM_BOLD, 0, 0 };
 const struct term_style tui_select = { TERM_REVERSE, 0, 0 };
 const struct term_style tui_title = { TERM_BOLD | TERM_REVERSE, 0, 0 };
+const struct term_style tui_safe = { TERM_BOLD, TERM_GREEN, 0 };
+const struct term_style tui_check = { TERM_BOLD, TERM_YELLOW, 0 };
+const struct term_style tui_alert = { TERM_BOLD, TERM_RED, 0 };
 
-static const char *const tab_names[] = { "1 Report", "2 Files" };
+static const char *const tab_names[] = { "1 Report", "2 Files", "3 Free" };
 
 static const char help_text[] =
 	"KEYS\n"
 	"=====\n"
-	"  1 2, tab          switch between Report and Files\n"
+	"  1 2 3, tab        switch between Report, Files and Free\n"
 	"  up down, j k      move;  page up/down, home/end for bigger jumps\n"
-	"  enter, right      open the folder\n"
+	"  enter, right      open the folder (in Free: show the item in Files)\n"
 	"  left, backspace   back to the parent folder\n"
 	"  /                 Files: filter this folder by name;  other tabs: find text (n = next)\n"
 	"  esc               clear the filter\n"
@@ -38,8 +41,9 @@ static const char help_text[] =
 	"  Report   plain-language summary, what can be freed, disks, space nobody can see,\n"
 	"           file types, folders untouched for a year, biggest files\n"
 	"  Files    every folder and file, biggest first, with share of the parent folder\n"
+	"  Free     caches, build output and other things safe to delete, with the command for each\n"
 	"\n"
-	"diskmoon only reads; nothing is deleted from here.\n";
+	"NOTHING IS DELETED FROM HERE. diskmoon only reads; the commands are for you to run.\n";
 
 int tui_body_height(void)
 {
@@ -164,7 +168,7 @@ static void draw_tabs(struct tui *t)
 {
 	int x = 1;
 	term_fill(0, 1, term_width(), tui_plain);
-	for (int i = 0; i < 2; i++) {
+	for (int i = 0; i < 3; i++) {
 		struct term_style s = (int)t->view == i ? tui_select : tui_dim;
 		x += term_put(x, 1, term_width() - x, s, " ");
 		x += term_put(x, 1, term_width() - x, s, tab_names[i]);
@@ -177,6 +181,7 @@ static const char *hints(const struct tui *t)
 {
 	switch (t->view) {
 	case VIEW_FILES: return "enter open  left back  / filter  s sort  w write report";
+	case VIEW_FREE: return "up/down choose  enter show in Files  w write report";
 	default: return "up/down scroll  / find  n next  left/right pan  w write report";
 	}
 }
@@ -208,6 +213,7 @@ void tui_draw(struct tui *t)
 	switch (t->view) {
 	case VIEW_REPORT: pager_draw(&t->report, TUI_TOP, h); break;
 	case VIEW_FILES: files_draw(t, TUI_TOP, h); break;
+	case VIEW_FREE: free_draw(t, TUI_TOP, h); break;
 	case VIEW_HELP: pager_draw(&t->help, TUI_TOP, h); break;
 	}
 	draw_footer(t);
@@ -267,9 +273,9 @@ static bool global_key(struct tui *t, int key)
 {
 	switch (key) {
 	case 'q': case TERM_CTRL('c'): t->quit = true; return true;
-	case '1': case '2': switch_view(t, (enum tui_view)(key - '1')); return true;
-	case TERM_KEY_TAB: switch_view(t, (enum tui_view)((t->view + 1) % 2)); return true;
-	case TERM_KEY_BACKTAB: switch_view(t, (enum tui_view)((t->view + 1) % 2)); return true;
+	case '1': case '2': case '3': switch_view(t, (enum tui_view)(key - '1')); return true;
+	case TERM_KEY_TAB: switch_view(t, (enum tui_view)((t->view + 1) % 3)); return true;
+	case TERM_KEY_BACKTAB: switch_view(t, (enum tui_view)((t->view + 2) % 3)); return true;
 	case 'w': write_report(t); return true;
 	case '?':
 		if (t->view != VIEW_HELP)
@@ -287,6 +293,7 @@ static void view_key(struct tui *t, int key)
 	switch (t->view) {
 	case VIEW_REPORT: used = pager_key(t, &t->report, key); break;
 	case VIEW_FILES: used = files_key(t, key); break;
+	case VIEW_FREE: used = free_key(t, key); break;
 	case VIEW_HELP: used = key == TERM_KEY_ESCAPE ? (t->view = t->before_help, true) : pager_key(t, &t->help, key); break;
 	}
 	if (!used)
@@ -309,6 +316,7 @@ static void release(struct tui *t)
 	pager_free(&t->report);
 	pager_free(&t->help);
 	files_close(t);
+	free(t->free.order);
 }
 
 int tui_run(const struct options *o, const struct scan_result *r, const struct tree_stats *s, const struct explain *e,
@@ -317,13 +325,14 @@ int tui_run(const struct options *o, const struct scan_result *r, const struct t
 	struct tui t = { .o = o, .r = r, .s = s, .e = e, .a = a };
 	load_report(&t);
 	load_text(&t.help, "%s", help_text);
+	free_init(&t);
 	files_open(&t, r->root, NULL);
 	if (!term_open()) {
 		fputs("diskmoon: the interactive view needs a terminal; use -o FILE for a report\n", stderr);
 		release(&t);
 		return 1;
 	}
-	tui_status(&t, "? shows every key.  2 = browse folders.");
+	tui_status(&t, "? shows every key.  3 = what you can free.  2 = browse folders.");
 	while (!t.quit) {
 		tui_draw(&t);
 		int key = term_read_key(files_busy(&t) ? BUSY_POLL_MS : -1);
