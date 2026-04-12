@@ -5,6 +5,16 @@ the ncdu JSON it writes.
 
 ## Unreleased
 
+## 0.4.0 - 2026-04-11
+
+### Added
+- SUMMARY in plain words at the top of the report, and WHAT YOU CAN FREE: package caches, build
+  output and other known folders, each with the command that cleans it, marked safe or check.
+- BY FILE TYPE and UNTOUCHED FOR OVER A YEAR sections.
+- Free tab with the same list; enter shows the item in Files.
+- `--duplicates[=SIZE]` finds files with the same content, comparing size, then the first 64K,
+  then everything.
+
 ## 0.3.0 - 2026-04-02
 
 ### Added
