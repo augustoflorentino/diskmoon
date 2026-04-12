@@ -4,6 +4,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "options.h"
+#include "dupes.h"
 #include "rules.h"
 #include "scan.h"
 
@@ -40,9 +42,11 @@ struct analysis {
 	size_t nstale;
 	uint64_t stale_floor;
 	int64_t now;
+	struct dupes dupes;
+	bool dupes_done;
 };
 
-void analyze_run(const struct scan_result *r, struct analysis *a);
+void analyze_run(const struct options *o, const struct scan_result *r, struct analysis *a);
 void analyze_free(struct analysis *a);
 const char *type_category(const char *ext);
 

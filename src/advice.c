@@ -76,7 +76,7 @@ static void summary_free(FILE *f, const struct analysis *a, const struct explain
 {
 	char safe[FMT_LEN], check[FMT_LEN], held[FMT_LEN];
 	fmt_size(a->safe, safe);
-	fmt_size(a->check + held_total(e) + hidden_total(e), check);
+	fmt_size(a->check + held_total(e) + hidden_total(e) + a->dupes.wasted, check);
 	fmt_size(held_total(e), held);
 	if (a->safe || a->check)
 		fprintf(f, "  About %s can be freed safely with the commands in WHAT YOU CAN FREE,\n"
@@ -202,18 +202,30 @@ static void write_hidden(FILE *f, const struct explain *e)
 	fputs("                  run: (as root) mkdir /tmp/r && mount --bind / /tmp/r, then look under /tmp/r/<mount point>\n", f);
 }
 
+static void write_dupes_finding(FILE *f, const struct analysis *a)
+{
+	char size[FMT_LEN], groups[FMT_LEN];
+	if (!a->dupes.wasted)
+		return;
+	fmt_size(a->dupes.wasted, size);
+	fmt_count(a->dupes.ngroups, groups);
+	fprintf(f, "%9s  %-5s  extra copies of identical files (%s sets, see DUPLICATE FILES)\n", size, "check", groups);
+	fputs("                  run: keep one copy of each; or replace copies with hard links if nothing edits them\n", f);
+}
+
 void advice_cleanup(FILE *f, const struct analysis *a, const struct explain *e)
 {
 	char safe[FMT_LEN], check[FMT_LEN];
-	if (!a->nfindings && !held_total(e) && !hidden_total(e))
+	if (!a->nfindings && !held_total(e) && !hidden_total(e) && !a->dupes.wasted)
 		return;
 	fmt_write_section(f, "WHAT YOU CAN FREE  (safe = rebuilt or downloaded again when needed; check = read first)");
 	for (size_t i = 0; i < a->nfindings; i++)
 		write_finding(f, &a->findings[i]);
+	write_dupes_finding(f, a);
 	write_held(f, e);
 	write_hidden(f, e);
 	fmt_size(a->safe, safe);
-	fmt_size(a->check + held_total(e) + hidden_total(e), check);
+	fmt_size(a->check + held_total(e) + hidden_total(e) + a->dupes.wasted, check);
 	fprintf(f, "\ntotal      %s safe, %s to check\n", safe, check);
 }
 
@@ -249,4 +261,32 @@ void advice_stale(FILE *f, const struct analysis *a)
 		fmt_write_path(f, path);
 		fputs("/\n", f);
 	}
+}
+
+void advice_dupes(FILE *f, const struct analysis *a)
+{
+	const struct dupes *d = &a->dupes;
+	char path[LONG_PATH], size[FMT_LEN], wasted[FMT_LEN], read[FMT_LEN], files[FMT_LEN], title[128];
+	if (!a->dupes_done)
+		return;
+	fmt_size(d->wasted, wasted);
+	fmt_size(d->bytes_read, read);
+	fmt_count(d->files_read, files);
+	snprintf(title, sizeof title, "DUPLICATE FILES  (same content; %s in extra copies)", wasted);
+	fmt_write_section(f, title);
+	fprintf(f, "compared   %s candidate files fully, %s read\n", files, read);
+	for (size_t i = 0; i < d->ngroups && i < DUPES_LIST; i++) {
+		const struct dupe_group *g = &d->groups[i];
+		fmt_size(g->size, size);
+		fmt_size(g->size * (g->count - 1), wasted);
+		fprintf(f, "\n%9s each, %zu copies, %s extra\n", size, g->count, wasted);
+		for (size_t j = 0; j < g->count; j++) {
+			node_path_in(g->dirs[j], g->files[j], path, sizeof path);
+			fputs("           ", f);
+			fmt_write_path(f, path);
+			fputc('\n', f);
+		}
+	}
+	if (d->ngroups > DUPES_LIST)
+		fprintf(f, "\n... and %zu more sets\n", d->ngroups - DUPES_LIST);
 }

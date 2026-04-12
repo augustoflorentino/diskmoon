@@ -127,6 +127,19 @@ def test_report_sections(t):
         assert section in text, section
 
 
+def test_duplicates(t):
+    base = os.path.join(t["tmp"], "dupes")
+    os.makedirs(base)
+    data = os.urandom(300000)
+    for name in ("a.bin", "b.bin", "c.bin"):
+        open(os.path.join(base, name), "wb").write(data)
+    open(os.path.join(base, "other.bin"), "wb").write(os.urandom(300000))
+    text = run("--duplicates=100K", "-o", "-", base).stdout.decode(errors="replace")
+    section = text[text.index("\nDUPLICATE FILES  ("):]
+    section = section[:section.index("\n\n=====", 1)]
+    assert "a.bin" in section and "c.bin" in section and "other.bin" not in section
+
+
 def test_bad_arguments(t):
     assert run("--no-such-option", check=False).returncode == 1
     assert run("-f", os.path.join(t["tmp"], "missing.json"), check=False).returncode == 1

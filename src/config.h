@@ -1,11 +1,13 @@
 #ifndef DISKMOON_CONFIG_H
 #define DISKMOON_CONFIG_H
 
-#define DISKMOON_VERSION "0.3.0"
+#define DISKMOON_VERSION "0.4.0"
 #define REPORT_FORMAT 1
 
 #define DEFAULT_TOP_FILES 50
 #define EXPLAIN_LIST 10
+#define DUPES_MIN (1u << 20)
+#define DUPES_LIST 20
 #define DEFAULT_REPORT_PREFIX "diskmoon"
 
 #define ARENA_CHUNK (1u << 20)

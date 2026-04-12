@@ -510,6 +510,7 @@ void report_write(FILE *f, const struct options *o, const struct scan_result *r,
 	}
 	advice_types(f, a, node_size(r->root));
 	advice_stale(f, a);
+	advice_dupes(f, a);
 	write_top_files(f, s);
 	write_tree(f, o, r->root);
 	write_errors(f, r);

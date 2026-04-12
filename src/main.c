@@ -37,6 +37,7 @@ static void usage(FILE *f)
 		"  -j, --jobs N          scanner threads (default: CPUs up to %d, %d on spinning disks)\n"
 		"  -x, --one-file-system stay on the filesystem of the starting path\n"
 		"  -a, --apparent-size   count file length instead of allocated blocks\n"
+		"      --duplicates[=SIZE] also find files with the same content (default from 1M)\n"
 		"      --all-fs          also enter tmpfs, proc, fuse and other non-disk mounts\n"
 		"      --dirs-only       hide files in the tree (they still count in totals)\n"
 		"      --ascii           draw the tree with ASCII characters\n"
@@ -62,7 +63,7 @@ static int parse_int(const char *s, int *out)
 	return 0;
 }
 
-enum { OPT_ALL_FS = 256, OPT_DIRS_ONLY, OPT_ASCII };
+enum { OPT_ALL_FS = 256, OPT_DIRS_ONLY, OPT_ASCII, OPT_DUPLICATES };
 
 static const struct option long_options[] = {
 	{ "output", required_argument, NULL, 'o' },
@@ -77,6 +78,7 @@ static const struct option long_options[] = {
 	{ "all-fs", no_argument, NULL, OPT_ALL_FS },
 	{ "dirs-only", no_argument, NULL, OPT_DIRS_ONLY },
 	{ "ascii", no_argument, NULL, OPT_ASCII },
+	{ "duplicates", optional_argument, NULL, OPT_DUPLICATES },
 	{ "quiet", no_argument, NULL, 'q' },
 	{ "help", no_argument, NULL, 'h' },
 	{ "version", no_argument, NULL, 'V' },
@@ -121,6 +123,9 @@ static int apply_option(struct options *o, int opt)
 	case OPT_ALL_FS: o->all_fs = true; return 0;
 	case OPT_DIRS_ONLY: o->no_files = true; return 0;
 	case OPT_ASCII: o->ascii = true; return 0;
+	case OPT_DUPLICATES:
+		o->dupes_min = DUPES_MIN;
+		return optarg && !parse_size(optarg, &o->dupes_min) ? fail("size", optarg) : 0;
 	case 'h': usage(stdout); exit(0);
 	case 'V': puts("diskmoon " DISKMOON_VERSION); exit(0);
 	default: usage(stderr); return -1;
@@ -231,7 +236,7 @@ static int run(struct options *o, struct scan_result *r, struct tree_stats *s)
 	if (!o->from && o->format == FORMAT_TXT)
 		collect_explain(r, s, &e);
 	if (o->format == FORMAT_TXT)
-		analyze_run(r, &a);
+		analyze_run(o, r, &a);
 	int status = deliver(o, r, s, &e, &a);
 	analyze_free(&a);
 	explain_free(&e);

@@ -15,6 +15,7 @@ struct options {
 	uint64_t min_size;
 	int top;
 	int jobs;
+	uint64_t dupes_min;
 	bool one_fs;
 	bool apparent;
 	bool all_fs;

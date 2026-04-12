@@ -271,7 +271,7 @@ static void compact_types(struct analysis *a)
 	qsort(a->types, out, sizeof *a->types, by_type_size);
 }
 
-void analyze_run(const struct scan_result *r, struct analysis *a)
+void analyze_run(const struct options *o, const struct scan_result *r, struct analysis *a)
 {
 	memset(a, 0, sizeof *a);
 	a->now = (int64_t)time(NULL);
@@ -286,6 +286,10 @@ void analyze_run(const struct scan_result *r, struct analysis *a)
 	drop_small_findings(a);
 	compact_types(a);
 	find_hot_path(a, r->root);
+	if (o->dupes_min && !r->source) {
+		dupes_find(r->root, o->dupes_min, r->jobs, !o->quiet && isatty(STDERR_FILENO), &a->dupes);
+		a->dupes_done = true;
+	}
 }
 
 struct category {
@@ -324,5 +328,6 @@ void analyze_free(struct analysis *a)
 {
 	free(a->findings);
 	free(a->types);
+	dupes_free(&a->dupes);
 	memset(a, 0, sizeof *a);
 }
