@@ -9,6 +9,7 @@
 
 #include "config.h"
 #include "analyze.h"
+#include "diff.h"
 #include "explain.h"
 #include "export.h"
 #include "import.h"
@@ -31,6 +32,7 @@ static void usage(FILE *f)
 		"  -o, --output FILE     write to FILE ('-' for stdout); .json and .csv pick the format\n"
 		"  -F, --format FMT      txt (report), ncdu (ncdu JSON export) or csv\n"
 		"  -f, --from FILE       read an ncdu JSON export instead of scanning ('-' for stdin)\n"
+		"  -c, --compare FILE    show what changed since an older scan\n"
 		"  -d, --depth N         show the tree down to depth N (sizes stay complete)\n"
 		"  -m, --min-size SIZE   fold entries smaller than SIZE (e.g. 10M, 1G)\n"
 		"  -n, --top N           list the N largest files (default %d)\n"
@@ -69,6 +71,7 @@ static const struct option long_options[] = {
 	{ "output", required_argument, NULL, 'o' },
 	{ "format", required_argument, NULL, 'F' },
 	{ "from", required_argument, NULL, 'f' },
+	{ "compare", required_argument, NULL, 'c' },
 	{ "depth", required_argument, NULL, 'd' },
 	{ "min-size", required_argument, NULL, 'm' },
 	{ "top", required_argument, NULL, 'n' },
@@ -113,6 +116,7 @@ static int apply_option(struct options *o, int opt)
 	case 'o': o->output = optarg; return 0;
 	case 'F': return parse_format(optarg, &o->format) ? fail("format", optarg) : 0;
 	case 'f': o->from = optarg; return 0;
+	case 'c': o->compare = optarg; return 0;
 	case 'd': return parse_int(optarg, &o->max_depth) ? fail("depth", optarg) : 0;
 	case 'm': return parse_size(optarg, &o->min_size) ? 0 : fail("size", optarg);
 	case 'n': return parse_int(optarg, &o->top) ? fail("count", optarg) : 0;
@@ -136,14 +140,17 @@ static int parse_args(int argc, char **argv, struct options *o)
 {
 	*o = (struct options){ .max_depth = -1, .top = DEFAULT_TOP_FILES };
 	int opt;
-	while ((opt = getopt_long(argc, argv, "o:F:f:d:m:n:j:xaqhV", long_options, NULL)) != -1)
+	while ((opt = getopt_long(argc, argv, "o:F:f:c:d:m:n:j:xaqhV", long_options, NULL)) != -1)
 		if (apply_option(o, opt))
 			return -1;
 	if (argc - optind > 1)
 		return fail("arguments", "only one path is accepted");
-	o->interactive = !o->output && o->format == FORMAT_AUTO && isatty(STDIN_FILENO) && isatty(STDOUT_FILENO);
+	o->interactive = !o->output && o->format == FORMAT_AUTO && !o->compare && isatty(STDIN_FILENO) &&
+			 isatty(STDOUT_FILENO);
 	if (o->format == FORMAT_AUTO)
 		o->format = format_from_name(o->output);
+	if (o->compare && o->format == FORMAT_NCDU)
+		return fail("format", "a comparison is written as txt or csv");
 	if (o->from)
 		return optind < argc ? fail("arguments", "a path cannot be combined with --from") : 0;
 	const char *path = optind < argc ? argv[optind] : "/";
@@ -198,10 +205,22 @@ static int load_tree(const struct options *o, const char *file, struct scan_resu
 	return 0;
 }
 
-static void write_output(FILE *f, const struct options *o, const struct scan_result *r, const struct tree_stats *s,
-			 const struct explain *e, const struct analysis *a)
+static int load_previous(const struct options *o, struct scan_result *old)
 {
-	if (o->format == FORMAT_NCDU)
+	struct tree_stats s;
+	int failed = load_tree(o, o->compare, old, &s);
+	tree_stats_free(&s);
+	return failed;
+}
+
+static void write_output(FILE *f, const struct options *o, const struct scan_result *r, const struct tree_stats *s,
+			 const struct explain *e, const struct analysis *a, const struct scan_result *old)
+{
+	if (old && o->format == FORMAT_CSV)
+		diff_write_csv(f, o, old, r);
+	else if (old)
+		diff_write(f, o, old, r);
+	else if (o->format == FORMAT_NCDU)
 		export_ncdu(f, o, r);
 	else if (o->format == FORMAT_CSV)
 		export_csv(f, o, r);
@@ -210,7 +229,7 @@ static void write_output(FILE *f, const struct options *o, const struct scan_res
 }
 
 static int deliver(const struct options *o, struct scan_result *r, struct tree_stats *s, struct explain *e,
-		   struct analysis *a)
+		   struct analysis *a, struct scan_result *old)
 {
 	if (o->interactive)
 		return tui_run(o, r, s, e, a);
@@ -219,7 +238,7 @@ static int deliver(const struct options *o, struct scan_result *r, struct tree_s
 	if (!f)
 		return 1;
 	setvbuf(f, NULL, _IOFBF, OUTPUT_BUFFER);
-	write_output(f, o, r, s, e, a);
+	write_output(f, o, r, s, e, a, old);
 	if (fclose(f)) {
 		perror(name[0] ? name : "stdout");
 		return 1;
@@ -231,15 +250,19 @@ static int deliver(const struct options *o, struct scan_result *r, struct tree_s
 
 static int run(struct options *o, struct scan_result *r, struct tree_stats *s)
 {
+	struct scan_result old = { 0 };
+	if (o->compare && load_previous(o, &old))
+		return 1;
 	struct explain e = { 0 };
 	struct analysis a = { 0 };
-	if (!o->from && o->format == FORMAT_TXT)
+	if (!o->from && !o->compare && o->format == FORMAT_TXT)
 		collect_explain(r, s, &e);
-	if (o->format == FORMAT_TXT)
+	if (!o->compare && o->format == FORMAT_TXT)
 		analyze_run(o, r, &a);
-	int status = deliver(o, r, s, &e, &a);
+	int status = deliver(o, r, s, &e, &a, o->compare ? &old : NULL);
 	analyze_free(&a);
 	explain_free(&e);
+	scan_result_free(&old);
 	return status;
 }
 

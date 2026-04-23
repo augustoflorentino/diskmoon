@@ -127,6 +127,18 @@ def test_report_sections(t):
         assert section in text, section
 
 
+def test_compare_shows_new_file(t):
+    tree, old = t["links"], os.path.join(t["tmp"], "old.json")
+    run("-o", old, tree)
+    grown = os.path.join(tree, "grown.bin")
+    open(grown, "wb").write(os.urandom(200000))
+    try:
+        text = run("-c", old, "-o", "-", tree).stdout.decode(errors="replace")
+    finally:
+        os.unlink(grown)
+    assert "grown.bin" in text
+
+
 def test_duplicates(t):
     base = os.path.join(t["tmp"], "dupes")
     os.makedirs(base)
