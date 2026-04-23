@@ -1,0 +1,19 @@
+cff-version: 1.2.0
+message: "If diskmoon helped your work, you can cite it with this metadata."
+type: software
+title: diskmoon
+abstract: >-
+  Disk usage analyzer for Linux: a parallel scan exact to the byte against du, a plain-language
+  report with what can be freed, the space no visible path holds, and a comparison with earlier scans.
+authors:
+  - family-names: Florentino
+    given-names: Augusto
+license: MIT
+version: 1.1.0
+repository-code: "https://github.com/augustoflorentino/diskmoon"
+keywords:
+  - disk usage
+  - du
+  - ncdu
+  - linux
+  - terminal
