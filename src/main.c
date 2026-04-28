@@ -11,6 +11,7 @@
 #include "analyze.h"
 #include "diff.h"
 #include "explain.h"
+#include "history.h"
 #include "export.h"
 #include "import.h"
 #include "fmt.h"
@@ -32,7 +33,8 @@ static void usage(FILE *f)
 		"  -o, --output FILE     write to FILE ('-' for stdout); .json and .csv pick the format\n"
 		"  -F, --format FMT      txt (report), ncdu (ncdu JSON export) or csv\n"
 		"  -f, --from FILE       read an ncdu JSON export instead of scanning ('-' for stdin)\n"
-		"  -c, --compare FILE    show what changed since an older scan\n"
+		"  -s, --save[=FILE]     also keep this scan as ncdu JSON (default: the scan history)\n"
+		"  -c, --compare FILE    show what changed since an older scan; 'last' = newest in the history\n"
 		"  -d, --depth N         show the tree down to depth N (sizes stay complete)\n"
 		"  -m, --min-size SIZE   fold entries smaller than SIZE (e.g. 10M, 1G)\n"
 		"  -n, --top N           list the N largest files (default %d)\n"
@@ -71,6 +73,7 @@ static const struct option long_options[] = {
 	{ "output", required_argument, NULL, 'o' },
 	{ "format", required_argument, NULL, 'F' },
 	{ "from", required_argument, NULL, 'f' },
+	{ "save", optional_argument, NULL, 's' },
 	{ "compare", required_argument, NULL, 'c' },
 	{ "depth", required_argument, NULL, 'd' },
 	{ "min-size", required_argument, NULL, 'm' },
@@ -116,6 +119,7 @@ static int apply_option(struct options *o, int opt)
 	case 'o': o->output = optarg; return 0;
 	case 'F': return parse_format(optarg, &o->format) ? fail("format", optarg) : 0;
 	case 'f': o->from = optarg; return 0;
+	case 's': o->save = optarg ? optarg : ""; return 0;
 	case 'c': o->compare = optarg; return 0;
 	case 'd': return parse_int(optarg, &o->max_depth) ? fail("depth", optarg) : 0;
 	case 'm': return parse_size(optarg, &o->min_size) ? 0 : fail("size", optarg);
@@ -140,7 +144,7 @@ static int parse_args(int argc, char **argv, struct options *o)
 {
 	*o = (struct options){ .max_depth = -1, .top = DEFAULT_TOP_FILES };
 	int opt;
-	while ((opt = getopt_long(argc, argv, "o:F:f:c:d:m:n:j:xaqhV", long_options, NULL)) != -1)
+	while ((opt = getopt_long(argc, argv, "o:F:f:s::c:d:m:n:j:xaqhV", long_options, NULL)) != -1)
 		if (apply_option(o, opt))
 			return -1;
 	if (argc - optind > 1)
@@ -205,12 +209,31 @@ static int load_tree(const struct options *o, const char *file, struct scan_resu
 	return 0;
 }
 
-static int load_previous(const struct options *o, struct scan_result *old)
+static int load_previous(const struct options *o, const struct scan_result *now, struct scan_result *old)
 {
+	static char path[PATH_MAX];
+	const char *file = o->compare;
+	if (!strcmp(file, "last")) {
+		if (!history_latest(now->root->name, NULL, path, sizeof path)) {
+			fprintf(stderr, "diskmoon: no saved scan of %s yet; run once with --save first\n", now->root->name);
+			return -1;
+		}
+		file = path;
+	}
 	struct tree_stats s;
-	int failed = load_tree(o, o->compare, old, &s);
+	int failed = load_tree(o, file, old, &s);
 	tree_stats_free(&s);
 	return failed;
+}
+
+static void save_scan(const struct options *o, const struct scan_result *r)
+{
+	char path[PATH_MAX];
+	snprintf(path, sizeof path, "%s", o->save);
+	if (!history_save(o, r, path, sizeof path))
+		perror(path[0] ? path : "diskmoon: scan history folder");
+	else if (!o->quiet)
+		fprintf(stderr, "scan saved to %s\n", path);
 }
 
 static void write_output(FILE *f, const struct options *o, const struct scan_result *r, const struct tree_stats *s,
@@ -251,8 +274,10 @@ static int deliver(const struct options *o, struct scan_result *r, struct tree_s
 static int run(struct options *o, struct scan_result *r, struct tree_stats *s)
 {
 	struct scan_result old = { 0 };
-	if (o->compare && load_previous(o, &old))
+	if (o->compare && load_previous(o, r, &old))
 		return 1;
+	if (o->save)
+		save_scan(o, r);
 	struct explain e = { 0 };
 	struct analysis a = { 0 };
 	if (!o->from && !o->compare && o->format == FORMAT_TXT)

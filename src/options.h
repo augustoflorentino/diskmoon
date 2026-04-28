@@ -10,6 +10,7 @@ struct options {
 	char *root;
 	const char *from;
 	const char *compare;
+	const char *save;
 	const char *output;
 	enum format format;
 	int max_depth;
