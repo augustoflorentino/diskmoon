@@ -6,7 +6,10 @@
 #include <time.h>
 
 #include "config.h"
+#include "diff.h"
 #include "fmt.h"
+#include "history.h"
+#include "import.h"
 #include "report.h"
 #include "tui_internal.h"
 
@@ -21,12 +24,12 @@ const struct term_style tui_safe = { TERM_BOLD, TERM_GREEN, 0 };
 const struct term_style tui_check = { TERM_BOLD, TERM_YELLOW, 0 };
 const struct term_style tui_alert = { TERM_BOLD, TERM_RED, 0 };
 
-static const char *const tab_names[] = { "1 Report", "2 Files", "3 Free" };
+static const char *const tab_names[] = { "1 Report", "2 Files", "3 Free", "4 Changes" };
 
 static const char help_text[] =
 	"KEYS\n"
 	"=====\n"
-	"  1 2 3, tab        switch between Report, Files and Free\n"
+	"  1 2 3 4, tab      switch between Report, Files, Free and Changes\n"
 	"  up down, j k      move;  page up/down, home/end for bigger jumps\n"
 	"  enter, right      open the folder (in Free: show the item in Files)\n"
 	"  left, backspace   back to the parent folder\n"
@@ -34,6 +37,7 @@ static const char help_text[] =
 	"  esc               clear the filter\n"
 	"  s                 Files: sort by size, name, last change or item count\n"
 	"  w                 write the full report to a .txt file in the current folder\n"
+	"  S                 save this scan, so the Changes tab can compare against it next time\n"
 	"  ?                 this help;  q quits\n"
 	"\n"
 	"WHAT THE TABS SHOW\n"
@@ -42,6 +46,7 @@ static const char help_text[] =
 	"           file types, folders untouched for a year, biggest files\n"
 	"  Files    every folder and file, biggest first, with share of the parent folder\n"
 	"  Free     caches, build output and other things safe to delete, with the command for each\n"
+	"  Changes  what grew, shrank, appeared or went away since the last saved scan\n"
 	"\n"
 	"NOTHING IS DELETED FROM HERE. diskmoon only reads; the commands are for you to run.\n";
 
@@ -128,6 +133,41 @@ static void show_busy(struct tui *t, const char *what)
 	tui_draw(t);
 }
 
+static void load_changes(struct tui *t)
+{
+	char path[LONG_PATH];
+	const char *root = t->r->root->name;
+	t->changes_ready = true;
+	if (!history_latest(root, t->saved[0] ? t->saved : NULL, path, sizeof path)) {
+		load_text(&t->changes,
+			  "No saved scan of %s yet.\n\n"
+			  "Press S to save this one. The next time you open diskmoon on this folder,\n"
+			  "this tab shows what grew, shrank, appeared and went away since then.\n", root);
+		return;
+	}
+	show_busy(t, "reading the previous scan...");
+	struct options o = *t->o;
+	struct scan_result old;
+	struct tree_stats st;
+	o.top = 0;
+	o.quiet = true;
+	if (import_ncdu(&o, path, &old)) {
+		load_text(&t->changes, "Could not read the previous scan:\n%s\n", path);
+		return;
+	}
+	tree_finalize(old.root, 0, &st);
+	char *data;
+	size_t size;
+	FILE *f;
+	render(&f, &data, &size);
+	if (!f)
+		return;
+	diff_write(f, &o, &old, t->r);
+	fclose(f);
+	pager_load(&t->changes, data, size);
+	tui_status(t, "compared with %s", path);
+}
+
 static void write_report(struct tui *t)
 {
 	char name[LONG_PATH], stamp[32];
@@ -149,6 +189,22 @@ static void write_report(struct tui *t)
 	free(where);
 }
 
+static void save_scan(struct tui *t)
+{
+	char path[LONG_PATH] = "";
+	if (t->r->source) {
+		tui_status(t, "this tree was loaded from %s; it is already saved", t->r->source);
+		return;
+	}
+	show_busy(t, "saving the scan...");
+	if (!history_save(t->o, t->r, path, sizeof path)) {
+		tui_status(t, "could not save the scan");
+		return;
+	}
+	snprintf(t->saved, sizeof t->saved, "%s", path);
+	tui_status(t, "scan saved; next time the Changes tab compares against it");
+}
+
 static void draw_title(struct tui *t)
 {
 	char path[LONG_PATH], right[160], size[FMT_LEN], items[FMT_LEN];
@@ -168,7 +224,7 @@ static void draw_tabs(struct tui *t)
 {
 	int x = 1;
 	term_fill(0, 1, term_width(), tui_plain);
-	for (int i = 0; i < 3; i++) {
+	for (int i = 0; i < 4; i++) {
 		struct term_style s = (int)t->view == i ? tui_select : tui_dim;
 		x += term_put(x, 1, term_width() - x, s, " ");
 		x += term_put(x, 1, term_width() - x, s, tab_names[i]);
@@ -180,7 +236,7 @@ static void draw_tabs(struct tui *t)
 static const char *hints(const struct tui *t)
 {
 	switch (t->view) {
-	case VIEW_FILES: return "enter open  left back  / filter  s sort  w write report";
+	case VIEW_FILES: return "enter open  left back  / filter  s sort  w write report  S save scan";
 	case VIEW_FREE: return "up/down choose  enter show in Files  w write report";
 	default: return "up/down scroll  / find  n next  left/right pan  w write report";
 	}
@@ -214,6 +270,7 @@ void tui_draw(struct tui *t)
 	case VIEW_REPORT: pager_draw(&t->report, TUI_TOP, h); break;
 	case VIEW_FILES: files_draw(t, TUI_TOP, h); break;
 	case VIEW_FREE: free_draw(t, TUI_TOP, h); break;
+	case VIEW_CHANGES: pager_draw(&t->changes, TUI_TOP, h); break;
 	case VIEW_HELP: pager_draw(&t->help, TUI_TOP, h); break;
 	}
 	draw_footer(t);
@@ -267,16 +324,19 @@ static void type_key(struct tui *t, int key)
 static void switch_view(struct tui *t, enum tui_view v)
 {
 	t->view = v;
+	if (v == VIEW_CHANGES && !t->changes_ready)
+		load_changes(t);
 }
 
 static bool global_key(struct tui *t, int key)
 {
 	switch (key) {
 	case 'q': case TERM_CTRL('c'): t->quit = true; return true;
-	case '1': case '2': case '3': switch_view(t, (enum tui_view)(key - '1')); return true;
-	case TERM_KEY_TAB: switch_view(t, (enum tui_view)((t->view + 1) % 3)); return true;
-	case TERM_KEY_BACKTAB: switch_view(t, (enum tui_view)((t->view + 2) % 3)); return true;
+	case '1': case '2': case '3': case '4': switch_view(t, (enum tui_view)(key - '1')); return true;
+	case TERM_KEY_TAB: switch_view(t, (enum tui_view)((t->view + 1) % 4)); return true;
+	case TERM_KEY_BACKTAB: switch_view(t, (enum tui_view)((t->view + 3) % 4)); return true;
 	case 'w': write_report(t); return true;
+	case 'S': save_scan(t); return true;
 	case '?':
 		if (t->view != VIEW_HELP)
 			t->before_help = t->view;
@@ -294,6 +354,7 @@ static void view_key(struct tui *t, int key)
 	case VIEW_REPORT: used = pager_key(t, &t->report, key); break;
 	case VIEW_FILES: used = files_key(t, key); break;
 	case VIEW_FREE: used = free_key(t, key); break;
+	case VIEW_CHANGES: used = pager_key(t, &t->changes, key); break;
 	case VIEW_HELP: used = key == TERM_KEY_ESCAPE ? (t->view = t->before_help, true) : pager_key(t, &t->help, key); break;
 	}
 	if (!used)
@@ -314,6 +375,7 @@ static void handle_key(struct tui *t, int key)
 static void release(struct tui *t)
 {
 	pager_free(&t->report);
+	pager_free(&t->changes);
 	pager_free(&t->help);
 	files_close(t);
 	free(t->free.order);

@@ -98,7 +98,7 @@ void pager_search(struct tui *t, struct pager *p)
 
 static void on_search(struct tui *t, bool done)
 {
-	struct pager *p = t->view == VIEW_HELP ? &t->help : &t->report;
+	struct pager *p = t->view == VIEW_CHANGES ? &t->changes : t->view == VIEW_HELP ? &t->help : &t->report;
 	if (!done)
 		return;
 	snprintf(p->search, sizeof p->search, "%s", t->input);

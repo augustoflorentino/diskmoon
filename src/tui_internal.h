@@ -10,7 +10,7 @@
 #define TUI_INPUT_MAX 256
 #define TUI_TOP 2
 
-enum tui_view { VIEW_REPORT, VIEW_FILES, VIEW_FREE, VIEW_HELP };
+enum tui_view { VIEW_REPORT, VIEW_FILES, VIEW_FREE, VIEW_CHANGES, VIEW_HELP };
 enum tui_sort { SORT_SIZE, SORT_NAME, SORT_MODIFIED, SORT_ITEMS, SORT_COUNT };
 
 struct pager {
@@ -61,7 +61,10 @@ struct tui {
 	struct files files;
 	struct free_list free;
 	struct pager report;
+	struct pager changes;
 	struct pager help;
+	bool changes_ready;
+	char saved[4096];
 	char status[512];
 	bool typing;
 	const char *prompt;
