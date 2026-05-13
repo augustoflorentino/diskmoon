@@ -5,6 +5,14 @@ the ncdu JSON it writes.
 
 ## Unreleased
 
+## 0.5.0 - 2026-05-12
+
+### Added
+- `-c FILE` compares with an older ncdu JSON scan: what grew, shrank, appeared and went away,
+  as a tree or as CSV.
+- `--save` keeps each scan in `~/.local/share/diskmoon/scans`; `-c last` compares with the newest.
+- Changes tab, and `S` in the interactive view to save the scan it shows.
+
 ## 0.4.0 - 2026-04-11
 
 ### Added
