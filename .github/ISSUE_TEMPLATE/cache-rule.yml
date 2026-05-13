@@ -1,0 +1,25 @@
+name: A cache diskmoon should know
+description: Something safe to delete that WHAT YOU CAN FREE does not list yet
+labels: [cleanup-rule]
+body:
+  - type: input
+    id: path
+    attributes:
+      label: Where it lives
+      placeholder: ~/.cache/ms-playwright or */node_modules/.cache
+    validations:
+      required: true
+  - type: input
+    id: command
+    attributes:
+      label: The command its own tool offers to clean it
+      placeholder: npx playwright uninstall --all
+  - type: dropdown
+    id: safety
+    attributes:
+      label: After deleting it
+      options:
+        - it comes back by itself when needed (safe)
+        - something has to be downloaded or rebuilt by hand (check)
+    validations:
+      required: true

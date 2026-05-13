@@ -1,0 +1,40 @@
+name: A total that does not add up
+description: diskmoon and du disagree, NOT SEEN explains nothing, or a folder is counted twice
+labels: [accuracy]
+body:
+  - type: markdown
+    attributes:
+      value: Accuracy bugs are the most important ones here. The numbers below let them be reproduced.
+  - type: textarea
+    id: numbers
+    attributes:
+      label: Both numbers
+      description: Paste the output of the two commands, for the same folder
+      render: text
+      placeholder: |
+        $ du -sxB1 /data
+        $ diskmoon -q -d0 -n0 -F csv -o - /data | head -2
+    validations:
+      required: true
+  - type: dropdown
+    id: fs
+    attributes:
+      label: Filesystem
+      options: [ext4, xfs, btrfs, zfs, f2fs, NFS or SMB, FUSE, other]
+    validations:
+      required: true
+  - type: checkboxes
+    id: tree
+    attributes:
+      label: What the tree has
+      options:
+        - label: hard links
+        - label: subvolumes, snapshots or reflinked copies
+        - label: other filesystems mounted inside it
+        - label: files that change during the scan
+  - type: input
+    id: version
+    attributes:
+      label: diskmoon -V and kernel (uname -r)
+    validations:
+      required: true
