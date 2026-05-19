@@ -1,0 +1,217 @@
+.TH DISKMOON 1 "2026-05-12" "diskmoon 0.5.0" "User Commands"
+.SH NAME
+diskmoon \- show where the disk space went, what can be freed and what nobody can see
+.SH SYNOPSIS
+.B diskmoon
+.RI [ options ] " " [ path ]
+.br
+.B diskmoon
+.RI [ options ] " " \-f " " FILE
+.SH DESCRIPTION
+.B diskmoon
+scans a directory tree in parallel and explains its disk usage.
+In a terminal it opens an interactive view; when the output is a pipe or a file,
+or with
+.B \-o
+or
+.BR \-F ,
+it writes the complete report instead.
+The path defaults to
+.IR / .
+.PP
+Sizes are the space allocated on disk, with hard links counted once, so the totals
+match
+.BR "du \-sxB1" .
+Disk sizes, used and free space match
+.BR "df \-B1" .
+.PP
+Besides the tree, the report explains the space that no visible path holds
+(deleted files still open by programs, files hidden under mount points, the
+reserve for root, filesystem overhead), lists caches and build output that are
+safe to delete together with the official command to clean each one, and can
+compare the scan with an earlier one.
+.PP
+.B diskmoon
+only reads. It never deletes anything.
+.SH OPTIONS
+.TP
+.BR \-o ", " \-\-output " " \fIFILE\fR
+Write to
+.I FILE
+.RB ( \- " for standard output)."
+A name ending in
+.I .json
+or
+.I .csv
+picks the format.
+.TP
+.BR \-F ", " \-\-format " " \fIFMT\fR
+.I txt
+(the report),
+.I ncdu
+(ncdu JSON export) or
+.IR csv .
+.TP
+.BR \-f ", " \-\-from " " \fIFILE\fR
+Read an ncdu JSON export instead of scanning
+.RB ( \- " for standard input)."
+.TP
+.BR \-s ", " \-\-save [ =\fIFILE\fR ]
+Also keep this scan as ncdu JSON, by default in the scan history.
+.TP
+.BR \-c ", " \-\-compare " " \fIFILE\fR
+Show what grew, shrank, appeared or went away since an older scan.
+.I last
+means the newest scan of the same path in the history.
+.TP
+.BR \-d ", " \-\-depth " " \fIN\fR
+Show the tree down to depth
+.IR N .
+Sizes stay complete.
+.TP
+.BR \-m ", " \-\-min\-size " " \fISIZE\fR
+Fold entries smaller than
+.I SIZE
+(for example 10M or 1G).
+.TP
+.BR \-n ", " \-\-top " " \fIN\fR
+List the
+.I N
+largest files (default 50).
+.TP
+.BR \-j ", " \-\-jobs " " \fIN\fR
+Scanner threads.
+The default is the number of CPUs up to 32, or 2 on a spinning disk.
+.TP
+.BR \-x ", " \-\-one\-file\-system
+Stay on the filesystem of the starting path.
+.TP
+.BR \-a ", " \-\-apparent\-size
+Count the file length instead of the allocated blocks.
+.TP
+.BR \-\-duplicates [ =\fISIZE\fR ]
+Also find files with the same content, from
+.I SIZE
+up (default 1M).
+Files are grouped by size, then by a hash of the first 64K, then by a hash of
+the whole content.
+.TP
+.B \-\-all\-fs
+Also enter tmpfs, proc, fuse and other mounts that are not disks.
+.TP
+.B \-\-dirs\-only
+Hide files in the tree. They still count in the totals.
+.TP
+.B \-\-ascii
+Draw the tree with ASCII characters.
+.TP
+.BR \-q ", " \-\-quiet
+No progress on standard error.
+.TP
+.BR \-h ", " \-\-help
+Show the options.
+.TP
+.BR \-V ", " \-\-version
+Show the version.
+.SH INTERACTIVE VIEW
+.TP
+.BR 1 " " 2 " " 3 " " 4 ", " Tab
+Switch between Report, Files, Free and Changes.
+.TP
+.BR Up " " Down ", " j " " k
+Move. Page Up, Page Down, Home and End jump further.
+.TP
+.BR Enter ", " Right
+Open the folder. In Free, show the item in Files.
+.TP
+.BR Left ", " Backspace
+Back to the parent folder.
+.TP
+.B /
+In Files, filter the folder by name. In the other tabs, find text;
+.B n
+goes to the next match.
+.TP
+.B Esc
+Clear the filter, or stop a folder that is still being read.
+.TP
+.B s
+In Files, sort by size, name, last change or item count.
+.TP
+.B w
+Write the full report to a .txt file in the current folder.
+.TP
+.B S
+Save this scan, so the Changes tab can compare against it next time.
+.TP
+.B ?
+Show every key.
+.TP
+.B q
+Quit.
+.SH REPORT
+.TP
+.B SUMMARY
+How full the disk is, the heaviest spot and how much can be freed, in plain words.
+.TP
+.B WHAT YOU CAN FREE
+Caches, build output and other known leftovers.
+Each finding is marked
+.I safe
+or
+.I check
+and comes with the command to clean it and the space it frees.
+.TP
+.B FILESYSTEMS " and " CAPACITY
+Every disk the scan touched: size, used, free, what the scan found, and how the
+device size splits into filesystem overhead, the reserve for root and the space
+for users.
+.TP
+.B NOT SEEN
+Space counted as used that no visible path holds, broken down by cause.
+.TP
+.B BY FILE TYPE ", " UNTOUCHED ", " DUPLICATE FILES
+Space by extension, folders unchanged for more than a year, and copies of the
+same content
+.RB ( \-\-duplicates ).
+.TP
+.B LARGEST FILES " and " TREE
+The biggest files, and every folder with its share of the parent.
+.SH FILES
+.TP
+.I $XDG_DATA_HOME/diskmoon/scans/
+Scan history used by
+.B \-\-save
+and
+.BR "\-\-compare last" .
+Without
+.BR XDG_DATA_HOME ,
+.I ~/.local/share/diskmoon/scans/
+is used.
+.SH EXIT STATUS
+.TP
+.B 0
+Success, even when some paths could not be read (they are listed in the report).
+.TP
+.B 1
+Bad arguments, a path or file that cannot be opened, or an output that cannot be written.
+.TP
+.B 2
+Out of memory.
+.SH EXAMPLES
+.TP
+.B sudo diskmoon
+Open the interactive view on the whole system.
+.TP
+.B diskmoon \-o report.txt ~
+Write the report of the home folder.
+.TP
+.B diskmoon \-s ~ && diskmoon \-c last ~
+Save a scan, and later see what changed since then.
+.TP
+.B diskmoon \-o tree.json /srv && diskmoon \-f tree.json
+Export a scan and open it again without touching the disk.
+.SH SEE ALSO
+.BR du (1),
+.BR df (1),
+.BR ncdu (1)
