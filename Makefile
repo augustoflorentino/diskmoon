@@ -17,6 +17,8 @@ build/%.o: src/%.c $(wildcard src/*.h) | build
 build:
 	mkdir -p build
 
+SANITIZE := -O1 -g -std=c11 -fno-pie -no-pie -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all
+
 install: diskmoon
 	install -Dm755 diskmoon $(DESTDIR)$(PREFIX)/bin/diskmoon
 	install -Dm644 man/diskmoon.1 $(DESTDIR)$(PREFIX)/share/man/man1/diskmoon.1
@@ -27,7 +29,12 @@ uninstall:
 check: diskmoon
 	python3 tests/run.py
 
+check-sanitize:
+	mkdir -p build/sanitize
+	$(CC) $(CPPFLAGS) $(SANITIZE) -pthread -o build/sanitize/diskmoon $(SRC) $(LDLIBS)
+	ASAN_OPTIONS=detect_leaks=1 DISKMOON=build/sanitize/diskmoon python3 tests/run.py
+
 clean:
 	rm -rf build diskmoon
 
-.PHONY: install uninstall check clean
+.PHONY: install uninstall check check-sanitize clean
