@@ -34,7 +34,15 @@ check-sanitize:
 	$(CC) $(CPPFLAGS) $(SANITIZE) -pthread -o build/sanitize/diskmoon $(SRC) $(LDLIBS)
 	ASAN_OPTIONS=detect_leaks=1 DISKMOON=build/sanitize/diskmoon python3 tests/run.py
 
+VERSION := $(shell sed -n 's/.*DISKMOON_VERSION "\(.*\)"/\1/p' src/config.h)
+DIST := diskmoon-$(VERSION)
+
+dist:
+	mkdir -p build
+	tar -czf build/$(DIST).tar.gz --transform 's,^,$(DIST)/,' --sort=name --owner=0 --group=0 \
+		--mtime=@0 LICENSE Makefile src man tests bench/bench.py bench/synth.py
+
 clean:
 	rm -rf build diskmoon
 
-.PHONY: install uninstall check check-sanitize clean
+.PHONY: install uninstall check check-sanitize dist clean
