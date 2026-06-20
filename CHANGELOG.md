@@ -5,6 +5,15 @@ the ncdu JSON it writes.
 
 ## Unreleased
 
+## 1.0.0 - 2026-06-19
+
+### Added
+- Manual page, installed by `make install` with the binary.
+- `make check-sanitize` runs the tests under ASan, UBSan and LSan.
+- `bench/bench.py` times diskmoon against ncdu, gdu, dust, dua and du, warm or with a cold cache.
+- `make dist` and an Arch package in `packaging/aur`.
+- `INDEX.txt` with what each file does.
+
 ## 0.5.0 - 2026-05-12
 
 ### Added
