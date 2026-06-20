@@ -1,0 +1,100 @@
+diskmoon - complete disk usage report
+
+In a terminal it opens an interactive view with four tabs:
+  1 Report   the report below, trimmed to the top of the tree
+  2 Files    browse folders biggest first; / filter, s sort, enter/left to move
+  3 Free     what can be deleted, safe or check, with the command and where
+  4 Changes  comparison with the last saved scan (S saves one)
+  w writes the full report to a .txt, ? shows every key, q quits.
+  Heavy folder work (1M+ entries) runs in a thread: the screen answers each key
+  in under 50 ms and esc stops it.
+
+Without a terminal, or with -o / -F, it writes a single .txt (report format 1) with:
+  header        root, host, time taken, how sizes are counted, totals
+  SUMMARY       plain-language answer: total, how full the disk is, heaviest
+                spot, how much can be freed, held and unreadable space
+  WHAT YOU CAN FREE  caches, build output, stale node_modules/venvs, package
+                caches, container images, held files; each with its size,
+                safe/check, the official command and where it is
+  FILESYSTEMS   every disk filesystem reached: size, used, free, what the
+                scan found and how much of "used" it could not see
+  CAPACITY      device size, filesystem overhead, root-only reserve, space for users
+  NOT SEEN      where the unseen space went: deleted files still open (with the
+                process holding them), files hidden under mount points,
+                unreadable paths, and what is left unexplained
+  BY FILE TYPE  largest extensions with share, file count and kind
+  UNTOUCHED     big folders with no change anywhere inside for over a year
+  DUPLICATE FILES  only with --duplicates: sets of identical files, extra copies
+  LARGEST FILES the N biggest files with their last change date
+  TREE          every directory and file, sorted by size, with share of
+                the parent, item count and newest change inside
+  UNREADABLE    paths that could not be read (run as root to avoid them)
+
+Other formats
+  -F ncdu / .json   ncdu JSON export (format 1.2), opens in ncdu -f
+  -F csv  / .csv    path,kind,size,items,modified(UTC),note; respects -d -m --dirs-only
+  -f FILE           read an ncdu JSON export (from diskmoon or ncdu) instead of scanning
+  -s, --save[=FILE] also save the scan as JSON (default: the history folder)
+  -c FILE|last      compare with an older scan: what grew, shrank, appeared, went away
+                    history: ${XDG_DATA_HOME:-~/.local/share}/diskmoon/scans/<root>/
+  --duplicates[=SIZE]  read files from SIZE (default 1M) up to find identical content
+
+Build and run
+  make
+  sudo ./diskmoon                  whole system, interactive view
+  sudo ./diskmoon -o report.txt    whole system, report file
+  ./diskmoon -m 10M -d 6 ~         home, hide entries under 10M, 6 levels deep
+  ./diskmoon -o scan.json /        save the scan to reopen later with -f
+  ./diskmoon -f scan.json -m 1G    report from a saved scan
+  ./diskmoon -s ~ ; ./diskmoon -c last ~   what changed in home since the last saved scan
+  sudo make install                installs to /usr/local/bin
+
+Counting rules
+  allocated blocks by default (what the disk actually spends), -a for length
+  hard links counted once, always charged to the smallest path (same result every run)
+  proc, sys, tmpfs, overlay, fuse and other non-disk mounts are skipped
+  a filesystem mounted twice, or a bind of part of it, is counted only once
+
+Layout
+  Makefile          build, install, clean
+  src/config.h      constants: version, report format, defaults, glyphs, buffer sizes
+  src/options.h     command line options struct and output formats
+  src/main.c        argument parsing, output file choice, program flow
+  src/scan.c/h      parallel directory walk, mount crossing, error capture
+  src/queue.c/h     work queue shared by the scanner threads
+  src/device.c/h    block device facts from /sys (rotational, size)
+  src/node.c/h      packed tree node (32-bit refs, threaded sibling list ending at the parent,
+                    folder header kept apart), arena allocator, path rebuild
+  src/longpath.c/h  open paths longer than PATH_MAX one chunk at a time
+  src/inodes.c/h    sharded set used to count hard links once when importing
+  src/links.c/h     deterministic hard link owner after a parallel scan
+  src/mounts.c/h    /proc/self/mountinfo parsing, lookup by point, mount id or device,
+                    block device behind each mount, btrfs subvolumes
+  src/tree.c/h      size aggregation, sorting, largest files, mount list
+  src/explain.c/h   deleted-but-open files and files hidden under mount points
+  src/report.c/h    text report writer
+  src/export.c/h    ncdu JSON and CSV writers
+  src/import.c/h    streaming ncdu JSON reader
+  src/history.c/h   saved scan folder per root, latest lookup
+  src/diff.c/h      comparison of two scans, text and CSV
+  src/rules.c/h     cleanup rules: known cache paths and name+marker patterns
+  src/analyze.c/h   applies rules, file types, heaviest path, untouched folders
+  src/advice.c/h    SUMMARY, WHAT YOU CAN FREE, BY FILE TYPE, UNTOUCHED, DUPLICATE FILES
+  src/dupes.c/h     duplicate finder: size, then first 64K, then full content
+  src/term.c/h      terminal layer without libraries: raw mode, keys, double-buffered
+                    screen with UTF-8 width
+  src/tui.c/h       interactive view: tabs, title, footer, input line, key loop
+  src/tui_files.c   Files tab: folder rows built and sorted in a cancellable thread
+  src/tui_free.c    Free tab: findings list with command and paths
+  src/tui_pager.c   scrollable text with search (Report, Changes, help)
+  src/tui_internal.h  state shared by the tui files
+  src/fmt.c/h       sizes, counts, percents, dates, escaping, size parsing
+  bench/bench.py    timing, CPU, memory and bytes per entry against other disk usage tools,
+                    every tool producing its full output
+  bench/synth.py    reproducible tree of real files (fixed seed) for benchmarks and accuracy
+  tests/run.py      end-to-end checks on small temporary trees: du totals, hard links,
+                    threads, JSON/CSV round trips, long paths and odd names, compare,
+                    duplicates, exit codes (make check; make check-sanitize under ASan/UBSan/LSan)
+  man/diskmoon.1    manual page, installed by make install
+  .github/workflows/ci.yml  build with gcc and clang, tests plain and under sanitizers
+  packaging/aur/PKGBUILD  Arch package; make dist builds the release tarball it expects

@@ -40,7 +40,7 @@ DIST := diskmoon-$(VERSION)
 dist:
 	mkdir -p build
 	tar -czf build/$(DIST).tar.gz --transform 's,^,$(DIST)/,' --sort=name --owner=0 --group=0 \
-		--mtime=@0 LICENSE Makefile src man tests bench/bench.py bench/synth.py
+		--mtime=@0 LICENSE INDEX.txt Makefile src man tests bench/bench.py bench/synth.py
 
 clean:
 	rm -rf build diskmoon
