@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 #include "config.h"
 #include "diff.h"
@@ -127,12 +128,6 @@ static void load_text(struct pager *p, const char *fmt, ...)
 	pager_load(p, data, size);
 }
 
-static void show_busy(struct tui *t, const char *what)
-{
-	tui_status(t, "%s", what);
-	tui_draw(t);
-}
-
 static void load_changes(struct tui *t)
 {
 	char path[LONG_PATH];
@@ -145,7 +140,6 @@ static void load_changes(struct tui *t)
 			  "this tab shows what grew, shrank, appeared and went away since then.\n", root);
 		return;
 	}
-	show_busy(t, "reading the previous scan...");
 	struct options o = *t->o;
 	struct scan_result old;
 	struct tree_stats st;
@@ -176,7 +170,6 @@ static void write_report(struct tui *t)
 	localtime_r(&now, &tm);
 	strftime(stamp, sizeof stamp, "%Y%m%d-%H%M%S", &tm);
 	snprintf(name, sizeof name, DEFAULT_REPORT_PREFIX "-%s.txt", stamp);
-	show_busy(t, "writing the report...");
 	FILE *f = fopen(name, "w");
 	if (!f) {
 		tui_status(t, "cannot write %s here; run diskmoon from a folder you can write to", name);
@@ -196,7 +189,6 @@ static void save_scan(struct tui *t)
 		tui_status(t, "this tree was loaded from %s; it is already saved", t->r->source);
 		return;
 	}
-	show_busy(t, "saving the scan...");
 	if (!history_save(t->o, t->r, path, sizeof path)) {
 		tui_status(t, "could not save the scan");
 		return;
@@ -214,7 +206,7 @@ static void draw_title(struct tui *t)
 	fmt_count(node_dir(dir)->items, items);
 	snprintf(right, sizeof right, "%s in %s items ", size, items);
 	term_fill(0, 0, term_width(), tui_title);
-	int x = term_put(0, 0, term_width(), tui_title, " diskmoon  ");
+	int x = term_put(0, 0, term_width(), tui_title, " ");
 	int room = term_width() - x - term_text_width(right) - 1;
 	term_put(x, 0, room > 0 ? room : 0, tui_title, path);
 	term_put(term_width() - term_text_width(right), 0, term_width(), tui_title, right);
@@ -249,20 +241,22 @@ static void draw_footer(struct tui *t)
 	if (t->typing) {
 		int x = 1 + term_put(1, y, term_width() - 1, tui_bold, t->prompt);
 		x += term_put(x, y, term_width() - x, tui_plain, t->input);
-		term_cursor(x, y, true);
+		term_cursor(x, y);
 		return;
 	}
-	term_cursor(0, 0, false);
 	if (files_busy(t)) {
 		term_put(1, y, term_width() - 1, tui_bold, "reading the folder...  (esc stops)");
 		return;
 	}
-	term_put(1, y, term_width() - 1, t->status[0] ? tui_plain : tui_dim, t->status[0] ? t->status : hints(t));
+	if (t->status[0])
+		term_put(1, y, term_width() - 1, tui_plain, t->status);
 }
 
-void tui_draw(struct tui *t)
+static void draw_view(void *ctx, pnl_app_t *app, pnl_canvas_t *canvas)
 {
-	term_clear();
+	struct tui *t = ctx;
+	(void)app;
+	term_begin(canvas);
 	draw_title(t);
 	draw_tabs(t);
 	int h = tui_body_height();
@@ -274,7 +268,6 @@ void tui_draw(struct tui *t)
 	case VIEW_HELP: pager_draw(&t->help, TUI_TOP, h); break;
 	}
 	draw_footer(t);
-	term_flush();
 }
 
 static size_t put_utf8(char *out, unsigned c)
@@ -331,7 +324,7 @@ static void switch_view(struct tui *t, enum tui_view v)
 static bool global_key(struct tui *t, int key)
 {
 	switch (key) {
-	case 'q': case TERM_CTRL('c'): t->quit = true; return true;
+	case 'q': pnl_app_quit(t->app); return true;
 	case '1': case '2': case '3': case '4': switch_view(t, (enum tui_view)(key - '1')); return true;
 	case TERM_KEY_TAB: switch_view(t, (enum tui_view)((t->view + 1) % 4)); return true;
 	case TERM_KEY_BACKTAB: switch_view(t, (enum tui_view)((t->view + 3) % 4)); return true;
@@ -342,7 +335,7 @@ static bool global_key(struct tui *t, int key)
 			t->before_help = t->view;
 		t->view = t->view == VIEW_HELP ? t->before_help : VIEW_HELP;
 		return true;
-	case TERM_CTRL('l'): term_redraw(); return true;
+	case TERM_CTRL('l'): pnl_app_redraw(t->app); return true;
 	default: return false;
 	}
 }
@@ -363,7 +356,7 @@ static void view_key(struct tui *t, int key)
 
 static void handle_key(struct tui *t, int key)
 {
-	if (key == TERM_KEY_RESIZE || key == TERM_KEY_NONE)
+	if (key == TERM_KEY_NONE)
 		return;
 	t->status[0] = '\0';
 	if (t->typing)
@@ -381,27 +374,62 @@ static void release(struct tui *t)
 	free(t->free.order);
 }
 
+static void poll_folder(void *ctx, pnl_app_t *app)
+{
+	struct tui *t = ctx;
+	files_poll(t);
+	if (!files_busy(t)) {
+		pnl_app_remove_timer(app, t->timer);
+		t->timer = 0;
+	}
+	pnl_app_redraw(app);
+}
+
+static void after_key(struct tui *t)
+{
+	if (files_busy(t) && !t->timer)
+		pnl_app_add_timer(t->app, BUSY_POLL_MS, poll_folder, t, &t->timer);
+	pnl_view_set_hints(t->app, hints(t));
+}
+
+static int key_view(void *ctx, pnl_app_t *app, int key)
+{
+	struct tui *t = ctx;
+	(void)app;
+	if (key == PNL_KEY_WHEEL_UP || key == PNL_KEY_WHEEL_DOWN)
+		return 0;
+	if (key != PNL_KEY_CLICK)
+		handle_key(t, key);
+	after_key(t);
+	return 1;
+}
+
+static int open_view(struct tui *t)
+{
+	char name[] = "diskmoon";
+	char *argv[] = { name, NULL };
+	int status = pnl_view_push(t->app, NULL, draw_view, key_view, t);
+	after_key(t);
+	return status ? status : pnl_app_run(t->app, 1, argv, NULL);
+}
+
 int tui_run(const struct options *o, const struct scan_result *r, const struct tree_stats *s, const struct explain *e,
 	    const struct analysis *a)
 {
 	struct tui t = { .o = o, .r = r, .s = s, .e = e, .a = a };
+	if (!isatty(STDIN_FILENO) || !isatty(STDOUT_FILENO) || pnl_app_create("diskmoon", NULL, &t.app)) {
+		fputs("diskmoon: the interactive view needs a terminal; use -o FILE for a report\n", stderr);
+		return 1;
+	}
 	load_report(&t);
 	load_text(&t.help, "%s", help_text);
 	free_init(&t);
 	files_open(&t, r->root, NULL);
-	if (!term_open()) {
-		fputs("diskmoon: the interactive view needs a terminal; use -o FILE for a report\n", stderr);
-		release(&t);
-		return 1;
-	}
 	tui_status(&t, "? shows every key.  3 = what you can free.  2 = browse folders.");
-	while (!t.quit) {
-		tui_draw(&t);
-		int key = term_read_key(files_busy(&t) ? BUSY_POLL_MS : -1);
-		files_poll(&t);
-		handle_key(&t, key);
-	}
-	term_close();
+	int status = open_view(&t);
 	release(&t);
-	return 0;
+	pnl_app_destroy(t.app);
+	if (status)
+		fprintf(stderr, "diskmoon: %s\n", pnl_strerror(status));
+	return status ? 1 : 0;
 }

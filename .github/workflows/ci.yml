@@ -38,7 +38,7 @@ jobs:
       - name: build with TSan
         run: |
           mkdir -p build/tsan
-          gcc -D_GNU_SOURCE -O1 -g -std=c11 -fsanitize=thread -pthread -o build/tsan/diskmoon src/*.c
+          gcc -D_GNU_SOURCE -O1 -g -std=c11 -fsanitize=thread -pthread -Ithird_party/c-tuikit -o build/tsan/diskmoon src/*.c third_party/c-tuikit/tuikit.c
       - name: tests under TSan
         run: TSAN_OPTIONS=halt_on_error=1 DISKMOON=build/tsan/diskmoon python3 tests/run.py
 

@@ -71,7 +71,8 @@ struct tui {
 	char input[TUI_INPUT_MAX];
 	size_t inputlen;
 	input_fn on_input;
-	bool quit;
+	pnl_app_t *app;
+	int timer;
 };
 
 extern const struct term_style tui_plain, tui_dim, tui_bold, tui_select, tui_title, tui_safe, tui_check, tui_alert;
@@ -79,7 +80,6 @@ extern const struct term_style tui_plain, tui_dim, tui_bold, tui_select, tui_tit
 int tui_body_height(void);
 void tui_status(struct tui *t, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
 void tui_ask(struct tui *t, const char *prompt, const char *initial, input_fn on_input);
-void tui_draw(struct tui *t);
 bool tui_move(size_t *cursor, size_t *top, size_t count, size_t page, int key);
 
 void files_open(struct tui *t, const struct node *dir, const struct node *select);

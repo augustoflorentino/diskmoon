@@ -81,9 +81,9 @@ Layout
   src/analyze.c/h   applies rules, file types, heaviest path, untouched folders
   src/advice.c/h    SUMMARY, WHAT YOU CAN FREE, BY FILE TYPE, UNTOUCHED, DUPLICATE FILES
   src/dupes.c/h     duplicate finder: size, then first 64K, then full content
-  src/term.c/h      terminal layer without libraries: raw mode, keys, double-buffered
-                    screen with UTF-8 width
-  src/tui.c/h       interactive view: tabs, title, footer, input line, key loop
+  src/term.c/h      drawing helpers over the c-tuikit canvas: clipped text, fills, UTF-8 width
+  src/tui.c/h       interactive view: tabs, title, footer, input line; one c-tuikit view
+                    whose key callback drives everything, with a timer while a folder loads
   src/tui_files.c   Files tab: folder rows built and sorted in a cancellable thread
   src/tui_free.c    Free tab: findings list with command and paths
   src/tui_pager.c   scrollable text with search (Report, Changes, help)
@@ -95,6 +95,8 @@ Layout
   tests/run.py      end-to-end checks on small temporary trees: du totals, hard links,
                     threads, JSON/CSV round trips, long paths and odd names, compare,
                     duplicates, exit codes (make check; make check-sanitize under ASan/UBSan/LSan)
+  third_party/c-tuikit  c-tuikit 6.7.0 as one header (scripts/amalgamate.sh), built in its
+                    own object with the library's own warnings; MIT, see its LICENSE
   man/diskmoon.1    manual page, installed by make install
   .github/workflows/ci.yml  build with gcc and clang, tests plain and under sanitizers
   packaging/aur/PKGBUILD  Arch package; make dist builds the release tarball it expects

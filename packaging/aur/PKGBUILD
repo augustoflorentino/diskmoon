@@ -1,5 +1,5 @@
 pkgname=diskmoon
-pkgver=1.0.0
+pkgver=1.1.0
 pkgrel=1
 pkgdesc='Show where the disk space went, what can be freed and what nobody can see'
 arch=('x86_64' 'aarch64')
