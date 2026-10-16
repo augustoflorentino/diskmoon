@@ -5,6 +5,16 @@ the ncdu JSON it writes.
 
 ## Unreleased
 
+## 1.1.0 - 2026-10-15
+
+### Changed
+- The interactive view now runs on [c-tuikit](https://github.com/augustoflorentino/c-tuikit) 6.7.0,
+  kept as one header in `third_party/c-tuikit`. The raw-mode terminal code is gone; `src/term.c`
+  only clips text and fills cells on the c-tuikit canvas.
+- The mouse wheel scrolls every tab. ctrl-c always quits, even while a folder is still loading.
+- The busy messages for writing the report and saving a scan are gone; the result shows on the
+  bottom line as before.
+
 ## 1.0.0 - 2026-06-19
 
 ### Added
